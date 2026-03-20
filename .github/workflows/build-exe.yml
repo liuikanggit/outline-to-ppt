@@ -26,7 +26,8 @@ jobs:
 
     - name: 使用 Nuitka 编译单文件 EXE
       run: |
-        nuitka --standalone --onefile --windows-console-mode=disable --windows-icon-from-ico=app_icon.ico --include-data-dir=tpl=tpl --include-data-files=0-fetch_mubu.py=. --include-data-files=1-mubu_parser.py=. --include-data-files=2-generate_master_json.py=. --include-data-files=3-create_master.py=. --include-data-files=4-generate_cover.py=. --include-data-files=5-generate_toc.py=. --include-data-files=6-generate_body.py=. gui_app.py
+        nuitka --standalone --onefile --assume-yes-for-downloads -o gui_app.exe --windows-console-mode=disable --windows-icon-from-ico=app_icon.ico --include-data-dir=tpl=tpl --include-data-files=0-fetch_mubu.py=. --include-data-files=1-mubu_parser.py=. --include-data-files=2-generate_master_json.py=. --include-data-files=3-create_master.py=. --include-data-files=4-generate_cover.py=. --include-data-files=5-generate_toc.py=. --include-data-files=6-generate_body.py=. gui_app.py
+
 
     - name: 上传构建产物 (EXE)
       uses: actions/upload-artifact@v4
