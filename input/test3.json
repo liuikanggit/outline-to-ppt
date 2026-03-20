@@ -1,0 +1,58 @@
+{
+    "masterName": "母版1-1-2",
+    "level1Chapter": {
+        "list": [
+            {
+                "zh": "引言",
+                "en": "Introduction"
+            },
+            {
+                "zh": "基础知识",
+                "en": "Fundamentals"
+            },
+            {
+                "zh": "核心原理",
+                "en": "Core Principles"
+            },
+            {
+                "zh": "应用实践",
+                "en": "Practical Applications"
+            }
+        ],
+        "activeIndex": 1
+    },
+    "level2Chapter": {
+        "list": [
+            {
+                "zh": "概念定义"
+            },
+            {
+                "zh": "发展历史"
+            },
+            {
+                "zh": "关键术语"
+            },
+            {
+                "zh": "学习目标"
+            }
+        ],
+        "activeIndex": 0
+    },
+    "level3Chapter": {
+        "list": [
+            {
+                "zh": "小节1"
+            },
+            {
+                "zh": "小节2"
+            },
+            {
+                "zh": "小节3"
+            },
+            {
+                "zh": "小节4"
+            }
+        ],
+        "activeIndex": 2
+    }
+}
