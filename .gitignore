@@ -24,3 +24,7 @@ Thumbs.db
 
 # Project generated outputs
 output/
+build/
+dist/
+*.spec
+

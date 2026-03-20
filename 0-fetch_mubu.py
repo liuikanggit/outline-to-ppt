@@ -46,8 +46,12 @@ def fetch_mubu_data(share_id: str, password: str = "", output_path: str = "mubu_
 
 def main():
     import sys
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.getcwd()
     output_file = os.path.join(base_dir, "output/mubu_response.json")
+    
+    # 确保输出目录存在，防止 open() 报错
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
     
     # 默认 shareId
     target_share_id = "9bmCYuBg_R"

@@ -1,0 +1,39 @@
+name: Build EXE for Windows
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: 切出代码
+      uses: actions/checkout@v4
+
+    - name: 设置 Python 环境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install python-pptx requests pywebview nuitka Pillow
+
+    - name: 动态生成图标
+      run: |
+        python generate_icons.py
+
+    - name: 使用 Nuitka 编译单文件 EXE
+      run: |
+        nuitka --standalone --onefile --windows-console-mode=disable --windows-icon-from-ico=app_icon.ico --include-data-dir=tpl=tpl --include-data-files=0-fetch_mubu.py=. --include-data-files=1-mubu_parser.py=. --include-data-files=2-generate_master_json.py=. --include-data-files=3-create_master.py=. --include-data-files=4-generate_cover.py=. --include-data-files=5-generate_toc.py=. --include-data-files=6-generate_body.py=. gui_app.py
+
+    - name: 上传构建产物 (EXE)
+      uses: actions/upload-artifact@v4
+      with:
+        name: outline-to-ppt-win
+        path: gui_app.exe
+

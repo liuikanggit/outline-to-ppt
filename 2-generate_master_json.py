@@ -6,7 +6,7 @@ def load_data(path):
         return json.load(f)
 
 def generate_master_json():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.getcwd()
     input_path = os.path.join(base_dir, 'output', 'mubu_parsed_structure.json')
     output_dir = os.path.join(base_dir, 'output', 'master')
     
@@ -80,5 +80,8 @@ def generate_master_json():
 
     print(f"✅ 所有 Master JSON 已导出至 {output_dir}")
 
-if __name__ == "__main__":
+def main():
     generate_master_json()
+
+if __name__ == "__main__":
+    main()

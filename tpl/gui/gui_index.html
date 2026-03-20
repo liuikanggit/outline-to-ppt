@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outline to PPT - 智能幻灯片生成器</title>
+    <link rel="stylesheet" href="gui_style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="glass-background"></div>
+    <main class="app-container">
+        <!-- 头部标题栏 -->
+        <header class="app-header">
+            <h1 class="gradient-text">Outline TO PPT</h1>
+            <p class="subtitle">智能大纲解析，一键生成精美幻灯片</p>
+        </header>
+
+        <!-- ================= PAGE 1 ================= -->
+        <div id="page1">
+            <!-- 表单交互区 -->
+            <section class="form-section glass-panel">
+                <div class="input-group">
+                    <label for="shareId">幕布 ShareID / 链接</label>
+                    <input type="text" id="shareId" placeholder="例如: 9bmCYuBg_R 或完整链接..." autocomplete="off">
+                </div>
+                <button id="generateBtn" class="btn-primary">
+                    <span class="btn-text">🚀 一键生成 PPT</span>
+                    <span class="btn-glow"></span>
+                </button>
+            </section>
+
+            <!-- 📝 实时日志台 (生成时显示) -->
+            <section class="console-section glass-panel" id="consolePanel" style="display: none; margin-top: 15px;">
+                <div class="section-title">
+                    <h2 style="font-size: 1.1rem;">生成进度</h2>
+                    <span class="live-tag">LIVE</span>
+                </div>
+                <div class="console-wrapper">
+                    <div class="console-log" id="consoleLog">等待任务开始...</div>
+                </div>
+            </section>
+        </div>
+
+        <!-- ================= PAGE 2 ================= -->
+        <div id="page2" style="display: none;">
+            <!-- 完结操作区 -->
+            <section class="result-section glass-panel">
+                <div class="success-banner">
+                    <div class="success-icon-large">🎉</div>
+                    <h2 class="gradient-text">大功告成！</h2>
+                    <p class="subtitle" style="margin-bottom: 25px;">您的幻灯片已成功生成。</p>
+                </div>
+
+                <div class="footer-buttons">
+                    <button id="openFolderBtn" class="btn-secondary">📂 打开输出文件夹</button>
+                    <button id="openPptBtn" class="btn-success">🖥️ 立即预览 PPT</button>
+                    <button id="backBtn" class="btn-ghost">↺ 返回上一页</button>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script src="gui_script.js"></script>
+</body>
+
+</html>

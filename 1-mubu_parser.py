@@ -153,7 +153,7 @@ def load_mubu_data_v2(filepath):
     return course
 
 def main():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.getcwd()
     input_path = os.path.join(base_dir, 'output','mubu_response.json')
     output_path = os.path.join(base_dir, 'output', 'mubu_parsed_structure.json')
 
