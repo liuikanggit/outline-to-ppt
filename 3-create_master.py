@@ -423,7 +423,8 @@ def _rebuild_level1_tabs(spTree: etree._Element,
          blipFill = etree.SubElement(pic, f"{{{PML_NS}}}blipFill")
          blip = etree.SubElement(blipFill, f"{{{DML_NS}}}blip")
          blip.set("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed", r_id)
-         etree.SubElement(blipFill, f"{{{DML_NS}}}stretch")
+         stretch = etree.SubElement(blipFill, f"{{{DML_NS}}}stretch")
+         etree.SubElement(stretch, f"{{{DML_NS}}}fillRect")
          
          spPr = etree.SubElement(pic, f"{{{PML_NS}}}spPr")
          xfrm = etree.SubElement(spPr, f"{{{DML_NS}}}xfrm")
