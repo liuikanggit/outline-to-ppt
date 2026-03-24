@@ -75,8 +75,8 @@ def recursive_parse_v2(node, level, code_prefix, parent_cn, parent_en, index_pat
         # 当前子节点的索引路径
         c_index_path = index_path + [i]
 
-        # 核心判定规则：任何节点只要 【带有图片】 或 【文字长度 > 9】 或 【包含冒号】 或 【当前章节层级 >= 3】, 均判定为本章节的 Content 
-        is_content = c_has_image or (len(c_cn) > 9) or (":" in c_cn) or ("：" in c_cn) or (level >= 3)
+        # 核心判定规则：任何节点只要 【带有图片】 或 【文字长度 > 9】 或 【当前章节层级 >= 3】, 均判定为本章节的 Content 
+        is_content = c_has_image or (len(c_cn) > 16)  or (level >= 3)
 
         if is_content:
             if c_has_image:

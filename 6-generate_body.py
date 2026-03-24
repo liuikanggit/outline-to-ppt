@@ -48,65 +48,112 @@ def download_image_local(uri):
 # ----------------- 1. 自动分页与字号算法 -----------------
 def paginate_contents_custom(contents):
     """
-    符合用户直觉的分页算法：
-    1. 试算 16pt (1600)。如果估算出的总行数 <= 12 行，采用 16pt 单页。
-    2. 如果总行数在 13~14 行之间，采用 14pt (1400) 单页输出。
-    3. 如果突破 14 行，就分页（每页最高 14 行），每页使用 16pt (或自动下调)。
+    符合用户直觉的智能防打散分页算法：
+    将列表转化为节点树，每个节点计算其子树所需行数(block_lines)。
+    1. 若某节点及其所有子节点能放在同一页，绝不拆断。
+    2. 若当前页放不下，但放入新页能完整放下，则提前开新页。
+    3. 只有当节点族群超出 14 行时，才会拆散树结构强制降维分布。
     """
-    def _get_lines(items, sz):
-        char_per = 38 if sz == 1600 else 44
-        tot = 0
-        for it in items:
-            t = it.get('text', '')
-            tot += math.ceil(len(t) / char_per) if t else 1
-        return tot
+    def get_lines(txt, max_char_per_line=59):
+        return math.ceil(len(txt) / max_char_per_line) if txt else 1
 
-    flat_texts = []
-    def flatten(item, depth):
-        if item.get('type') == 'text':
-            info = item.get('text', {})
-            # 兼容 info 为 list 或 dict 两种形态
-            info_list = info if isinstance(info, list) else [info]
-            
-            for node in info_list:
-                txt = node.get('text', '')
-                has_bullet = node.get('hasBullet', False)
-                if txt:
-                     flat_texts.append({
-                         "text": txt, 
-                         "level": depth, 
-                         "hasBullet": has_bullet or (depth >= 1)
-                     })
-                     for sub in node.get('subContent', []):
-                          # 递归时，由于 sub 已经是 {text:..., hasBullet:...} 结构，包装给 flatten
-                          flatten({"type": "text", "text": sub}, depth+1)
-                      
+    def build_tree(item, depth):
+        txt = item.get('text', '')
+        has_bullet = item.get('hasBullet', False)
+        node = {
+            'text': txt,
+            'level': depth,
+            'hasBullet': has_bullet or (depth >= 1),
+            'lines': get_lines(txt, 59), 
+            'children': []
+        }
+        for sub in item.get('subContent', []):
+            node['children'].append(build_tree(sub, depth + 1))
+        
+        node['block_lines'] = node['lines'] + sum(c['block_lines'] for c in node['children'])
+        return node
+    
+    forest = []
     for c in contents:
-         flatten(c, 0)
+        if c.get('type') == 'text':
+            info = c.get('text', {})
+            info_list = info if isinstance(info, list) else [info]
+            for node_data in info_list:
+                if node_data.get('text', ''):
+                    forest.append(build_tree(node_data, 0))
 
-    if not flat_texts:
-         return [], 1600
+    if not forest:
+        return [], 1600
 
-    tot_lines_16 = _get_lines(flat_texts, 1600)
-    if tot_lines_16 <= 12:
-        return [flat_texts], 1600
-    if _get_lines(flat_texts, 1400) <= 14:
-        return [flat_texts], 1400
+    total_lines = sum(n['block_lines'] for n in forest)
+    
+    # 将树形直接摊平的辅助函数
+    def flatten_tree(nodes):
+        flat = []
+        def dfs(n):
+            flat.append(n)
+            for ch in n['children']: dfs(ch)
+        for n in nodes: dfs(n)
+        return flat
 
-    # 突破 14 行，开启分页
+    if total_lines <= 12:
+        return [flatten_tree(forest)], 1600
+    if total_lines <= 14:
+        return [flatten_tree(forest)], 1400
+
+    # 突破限制，进行智能组装分页
     pages = []
     curr_page = []
     curr_lines = 0
-    for it in flat_texts:
-         l_count = math.ceil(len(it['text']) / 38) if it['text'] else 1
-         if curr_lines + l_count <= 14:
-              curr_page.append(it)
-              curr_lines += l_count
-         else:
-              if curr_page: pages.append(curr_page)
-              curr_page = [it]
-              curr_lines = l_count
-    if curr_page: pages.append(curr_page)
+    MAX_LINES = 14
+
+    def pack_node(node):
+        nonlocal pages, curr_page, curr_lines
+        
+        # 1. 尝试将整个节点群（自身 + 所有子孙）整体放入当前页
+        if curr_lines + node['block_lines'] <= MAX_LINES:
+            def dfs_add(n):
+                nonlocal curr_lines
+                curr_page.append(n)
+                curr_lines += n['lines']
+                for ch in n['children']: dfs_add(ch)
+            dfs_add(node)
+            return
+
+        # 2. 装不下当前页，判断放到新页能否完整装下
+        if node['block_lines'] <= MAX_LINES:
+            if curr_page:
+                pages.append(curr_page)
+            curr_page = []
+            curr_lines = 0
+            def dfs_add2(n):
+                nonlocal curr_lines
+                curr_page.append(n)
+                curr_lines += n['lines']
+                for ch in n['children']: dfs_add2(ch)
+            dfs_add2(node)
+            return
+
+        # 3. 连一整页都装不下这个节点群，必须强制拆分！先装自身
+        if curr_lines + node['lines'] > MAX_LINES:
+            if curr_page:
+                pages.append(curr_page)
+            curr_page = []
+            curr_lines = 0
+        
+        curr_page.append(node)
+        curr_lines += node['lines']
+
+        # 然后对其子节点依次调用包装逻辑
+        for ch in node['children']:
+            pack_node(ch)
+
+    for n in forest:
+        pack_node(n)
+        
+    if curr_page:
+        pages.append(curr_page)
+
     return pages, 1600
 
 
@@ -148,8 +195,34 @@ def create_chapter_slide(prs, template_slide, chapter):
                 if len(paras) >= 2:
                     r_nodes = paras[1].findall(f'.//{{{NSMAP["a"]}}}r')
                     if r_nodes:
-                         t_node = r_nodes[0].find(f'{{{NSMAP["a"]}}}t')
-                         if t_node is not None: t_node.text = chapter.get('chapterEnName', '')
+                         r_node = r_nodes[0]
+                         t_node = r_node.find(f'{{{NSMAP["a"]}}}t')
+                         if t_node is not None: 
+                              t_node.text = chapter.get('chapterEnName', '')
+                         
+                         # 将英文字体颜色覆写为灰色、字号设定为 18 号 (18*100 = 1800)
+                         rPr = r_node.find(f'{{{NSMAP["a"]}}}rPr')
+                         if rPr is None:
+                             rPr = etree.Element(f'{{{NSMAP["a"]}}}rPr')
+                             r_node.insert(0, rPr)
+                         rPr.set('sz', '1800')
+                         
+                         # 清理旧的颜色节点
+                         for child in list(rPr):
+                             if child.tag.endswith('solidFill') or child.tag.endswith('gradFill'):
+                                 rPr.remove(child)
+                         
+                         # 创建一个全新的纯灰色节点
+                         solidFill = etree.Element(f'{{{NSMAP["a"]}}}solidFill')
+                         etree.SubElement(solidFill, f'{{{NSMAP["a"]}}}srgbClr', val='808080')
+                         
+                         # 必须将其插在开头位置 (严格的 OpenXML Schema 规范: Fill 系必须排在 latin/ea 之内)
+                         insert_idx = 0
+                         for idx, child in enumerate(rPr):
+                             if child.tag.endswith('ln'):
+                                 insert_idx = idx + 1
+                         rPr.insert(insert_idx, solidFill)
+
                          for extra_r in r_nodes[1:]:
                               paras[1].remove(extra_r)
 
@@ -199,22 +272,43 @@ def create_content_slide_optimized(prs, content_layout, page_title, items, font_
         if txt:
             para = etree.SubElement(txBody, f'{{{NSMAP["a"]}}}p')
             pPr = etree.SubElement(para, f'{{{NSMAP["a"]}}}pPr')
-            if has_bullet:
-                pPr.set('marL', '571500')
-                etree.SubElement(pPr, f'{{{NSMAP["a"]}}}buFont', typeface='Arial')
-                etree.SubElement(pPr, f'{{{NSMAP["a"]}}}buChar', char='•')
-            elif level >= 1:
-                pPr.set('marL', str(571500 * level))
+            
+            # PowerPoint 多级缩进字典 (marL, indent, char) — 统一使用实心圆点
+            bullet_styles = [
+                (342900, -342900, '•'),  # L0
+                (742950, -342900, '•'),  # L1
+                (1143000, -342900, '•'), # L2
+                (1543050, -342900, '•'), # L3
+                (1943100, -342900, '•')  # L4
+            ]
+            
+            # 根据扁平化下传的 depth 获取专属缩进配置 (兼容越界场景)
+            lvl_idx = min(level, len(bullet_styles) - 1)
 
+            # ==========================
+            # 严格的 OpenXML Schema 顺序:
+            # lnSpc -> ... -> buFont -> buChar
+            # ==========================
             lnSpc = etree.SubElement(pPr, f'{{{NSMAP["a"]}}}lnSpc')
-            etree.SubElement(lnSpc, f'{{{NSMAP["a"]}}}spcPct', val='150000')  # 1.5倍
+            etree.SubElement(lnSpc, f'{{{NSMAP["a"]}}}spcPct', val='150000')  # 1.5倍行距
+
+            if has_bullet:
+                marL, ind_val, char = bullet_styles[lvl_idx]
+                pPr.set('marL', str(marL))
+                pPr.set('indent', str(ind_val))
+                etree.SubElement(pPr, f'{{{NSMAP["a"]}}}buFont', typeface='Arial')
+                etree.SubElement(pPr, f'{{{NSMAP["a"]}}}buChar', char=char)
+            elif level >= 1:
+                # 仅缩进，无项目符号
+                marL, _, _ = bullet_styles[lvl_idx]
+                pPr.set('marL', str(marL))
 
             run = etree.SubElement(para, f'{{{NSMAP["a"]}}}r')
             rPr = etree.SubElement(run, f'{{{NSMAP["a"]}}}rPr', lang='zh-CN', sz=str(font_sz_val), dirty='0')
             solidFill = etree.SubElement(rPr, f'{{{NSMAP["a"]}}}solidFill')
             etree.SubElement(solidFill, f'{{{NSMAP["a"]}}}schemeClr', val='tx1')
-            etree.SubElement(rPr, f'{{{NSMAP["a"]}}}latin', typeface='微软雅黑')
-            etree.SubElement(rPr, f'{{{NSMAP["a"]}}}ea', typeface='微软雅黑')
+            etree.SubElement(rPr, f'{{{NSMAP["a"]}}}latin', typeface='Microsoft YaHei Light')
+            etree.SubElement(rPr, f'{{{NSMAP["a"]}}}ea', typeface='Microsoft YaHei Light')
             t = etree.SubElement(run, f'{{{NSMAP["a"]}}}t')
             t.text = txt
 
@@ -250,26 +344,34 @@ def append_images_to_slide(new_slide, img_info, prs):
 
 
 # ----------------- 4. 路由逻辑 -----------------
-def get_layout_by_code(prs, code_str, default_layout):
+def get_layout_by_names(prs, target_master_name, target_layout_name, default_layout):
     """
-    匹配 Layout 母版配置（修正一：支持完全相等精确匹配，防 code_match in name substring 偏移）
+    匹配重构后的多版面逻辑：通过 masterName + layoutName 双键联合查找对应的 Layout
     """
-    parts = code_str.split('.')
-    code_match = ".".join(parts[:3])  # 形如 '1.1' 或者 '1.2.1'
-    
+    # 第一次精确匹配：masterName 且 layoutName 相同
     for m in prs.slide_masters:
-         for lay in m.slide_layouts:
-              cSld = lay._element.find(f'{{{NSMAP["p"]}}}cSld')
-              if cSld is not None:
-                   name = cSld.get('name', '').replace('母版-', '').split(' - ')[0]
-                   if name == code_match:
-                        return lay
-                        
-    # 修正二：若没找到精确匹配，降级查找上一层，如 1.2.1.2 -> 1.2.1
-    if len(parts) > 1:
-         fallback_code = ".".join(parts[:-1])
-         return get_layout_by_code(prs, fallback_code, default_layout)
-         
+        m_cSld = m._element.find(f'{{{NSMAP["p"]}}}cSld')
+        m_name = m_cSld.get('name', '') if m_cSld is not None else ''
+        
+        if m_name == target_master_name:
+            for lay in m.slide_layouts:
+                lay_cSld = lay._element.find(f'{{{NSMAP["p"]}}}cSld')
+                lay_name = lay_cSld.get('name', '') if lay_cSld is not None else ''
+                if lay_name == target_layout_name:
+                    return lay
+                    
+    # 第二次降级匹配：如果没找到特定 layoutName，则降级查找相同 masterName 下的 'default'
+    for m in prs.slide_masters:
+        m_cSld = m._element.find(f'{{{NSMAP["p"]}}}cSld')
+        m_name = m_cSld.get('name', '') if m_cSld is not None else ''
+        if m_name == target_master_name:
+            for lay in m.slide_layouts:
+                lay_cSld = lay._element.find(f'{{{NSMAP["p"]}}}cSld')
+                lay_name = lay_cSld.get('name', '') if lay_cSld is not None else ''
+                if lay_name == "default":
+                    return lay
+                    
+    # 都没找到，返回骨架 fallback
     return default_layout
 
 def main():
@@ -304,10 +406,26 @@ def main():
 
     added_slides = []
 
-    def expand_chapters(chapter, level_path):
+    def expand_chapters(chapter, level_path, ancestor_names):
         ch_name = chapter.get('chapterName', '')
         level = chapter.get('level', 1)
         code_str = chapter.get('code', '1.1.1')
+        
+        current_names = ancestor_names + [ch_name]
+        
+        target_master_name = ""
+        target_layout_name = ""
+        # 兼容最新母版分组生成规则
+        if level == 1:
+            target_master_name = current_names[0]
+            target_layout_name = "default"
+        elif level == 2:
+            target_master_name = f"{current_names[0]}-{current_names[1]}"
+            target_layout_name = "default"
+        elif level >= 3:
+            target_master_name = f"{current_names[0]}-{current_names[1]}"
+            target_layout_name = current_names[2]
+
 
         # 1. 章节页
         if level == 1:
@@ -325,13 +443,13 @@ def main():
             if text_contents:
                 # 恢复全量内容页渲染
                 pages, font_sz = paginate_contents_custom(text_contents)
-                lay = get_layout_by_code(prs, code_str, default_content_layout)
+                lay = get_layout_by_names(prs, target_master_name, target_layout_name, default_content_layout)
                 for page_dict in pages:
                     pg_slide = create_content_slide_optimized(prs, lay, ch_name, page_dict, font_sz)
                     added_slides.append(pg_slide)
 
             for img in img_contents:
-                lay = get_layout_by_code(prs, code_str, default_content_layout)
+                lay = get_layout_by_names(prs, target_master_name, target_layout_name, default_content_layout)
                 img_slide = prs.slides.add_slide(lay)
                 
                 # 独家修复：图片页强制增加独立标题框
@@ -348,11 +466,11 @@ def main():
                 added_slides.append(img_slide)
 
         for sub in chapter.get('subChapter', []):
-             expand_chapters(sub, level_path + [sub.get('code', '')])
+             expand_chapters(sub, level_path + [sub.get('code', '')], current_names)
 
     print("✍️ 开始递归解析和挂载正文页...")
     for ch in outline_chapters:
-         expand_chapters(ch, [])
+         expand_chapters(ch, [], [])
 
     # 4. 抹杀多余模板页 [2、3页]
     prs_element = prs.element if hasattr(prs, 'element') else prs.part.element

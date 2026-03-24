@@ -98,7 +98,8 @@ def create_toc_slide(prs, slide, chapters):
     chapter_box_height = 461665
     chapter_gap = 120000 
     # 垂直居中
-    toc_area_top = (prs.slide_height - chapter_box_height) // 2 
+    # 黄金比例垂直布局：上方空隙占总剩余空隙的 38.2% (向上平移，保持视觉平衡)
+    toc_area_top = int((prs.slide_height - chapter_box_height) * 0.382)
 
     slide_width = prs.slide_width
     total_width = num_chapters * chapter_box_width + (num_chapters - 1) * chapter_gap

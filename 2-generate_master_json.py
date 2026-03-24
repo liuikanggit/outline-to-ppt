@@ -29,20 +29,35 @@ def generate_master_json():
             "en": c.get("chapterEnName", "")
         })
 
-    def dfs(node, level, ancestors_lists, ancestors_indices):
+    def dfs(node, level, ancestors_lists, ancestors_indices, ancestor_names):
         """
         node: 当前 Chapter 节点
         level: 当前层级 (1, 2, 3)
         ancestors_lists: [l1_list, l2_list, l3_list]
         ancestors_indices: [i1, i2, i3]
+        ancestor_names: [l1_name, l2_name, ...]
         """
         code = node.get("code", "")
         content = node.get("content", [])
         
         # 只要该章节下有内容，就生成一个 JSON 母版
         if content:
+            master_name = ""
+            layout_name = ""
+            if level == 1:
+                master_name = ancestor_names[0]
+                layout_name = "default"
+            elif level == 2:
+                master_name = f"{ancestor_names[0]}-{ancestor_names[1]}"
+                layout_name = "default"
+            elif level >= 3:
+                # 3级或以上：masterName 依然是 1级-2级，layoutName 为 3级章节名称
+                master_name = f"{ancestor_names[0]}-{ancestor_names[1]}"
+                layout_name = ancestor_names[2]
+
             master_info = {
-                "masterName": f"母版-{code}", 
+                "masterName": master_name,
+                "layoutName": layout_name,
                 "level1Chapter": {
                     "list": l1_list,
                     "activeIndex": ancestors_indices[0] if len(ancestors_indices) > 0 else 0
@@ -72,11 +87,12 @@ def generate_master_json():
         for idx, sub_node in enumerate(sub_chapters):
             next_lists = ancestors_lists + [current_list]
             next_indices = ancestors_indices + [idx]
-            dfs(sub_node, level + 1, next_lists, next_indices)
+            next_names = ancestor_names + [sub_node.get("chapterName", "")]
+            dfs(sub_node, level + 1, next_lists, next_indices, next_names)
 
     # 遍历顶层 Level 1
     for i, ch in enumerate(level1_chapters):
-        dfs(ch, 1, [l1_list], [i])
+        dfs(ch, 1, [l1_list], [i], [ch.get("chapterName", "")])
 
     print(f"✅ 所有 Master JSON 已导出至 {output_dir}")
 
