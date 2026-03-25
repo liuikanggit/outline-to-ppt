@@ -410,7 +410,8 @@ def _rebuild_level1_tabs(spTree: etree._Element,
     anchor_y = 0 
     mid_x = slot_x + (slot_cx - mid_cx) // 2
 
-    left_x = mid_x - W_L + OVERLAP
+    # 左边色块出现微小空隙，额外向中间靠拢 0.005cm (1800 EMU)
+    left_x = mid_x - W_L + OVERLAP + 1800
     right_x = mid_x + mid_cx - OVERLAP
 
     def _create_pic_node(p_id, name, r_id, x, y, cx, cy):
@@ -849,10 +850,11 @@ def create_master(template_pptx: Path,
                     zout.writestr(item, zin.read(item.filename))
 
             # 🌟 写入背景素材 🖼️
+            current_script_dir = os.path.dirname(os.path.abspath(__file__))
             img_map = {
-                "ppt/media/bg_left.png": "tpl/img/左侧尖角.png",
-                "ppt/media/bg_mid.png": "tpl/img/中间色块.png",
-                "ppt/media/bg_right.png": "tpl/img/右侧尖角.png"
+                "ppt/media/bg_left.png": os.path.join(current_script_dir, "tpl", "img", "左侧尖角.png"),
+                "ppt/media/bg_mid.png": os.path.join(current_script_dir, "tpl", "img", "中间色块.png"),
+                "ppt/media/bg_right.png": os.path.join(current_script_dir, "tpl", "img", "右侧尖角.png")
             }
             for target_p, source_p in img_map.items():
                 if os.path.exists(source_p):

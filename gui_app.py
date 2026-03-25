@@ -29,6 +29,9 @@ class Api:
             if sys.platform == 'darwin':
                 # dist/大纲生成PPT.app/Contents/MacOS/大纲生成PPT
                 self.work_dir = os.path.abspath(os.path.join(os.path.dirname(sys.executable), '..', '..', '..'))
+                # 🌟 修复 AppTranslocation 只读隔离区 Bug 🍎
+                if "AppTranslocation" in self.work_dir:
+                    self.work_dir = os.path.expanduser("~/Downloads")
             else:
                 self.work_dir = os.path.dirname(sys.executable)
         else:
@@ -196,15 +199,20 @@ class Api:
 
 def main():
     global window
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    api = Api(current_dir)
+    # 兼容 PyInstaller 打包后的资源路径
+    if getattr(sys, 'frozen', False):
+        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+    api = Api(base_dir)
 
     # 载入面板 HTML
-    html_path = os.path.join(current_dir, "tpl", "gui", "gui_index.html")
+    html_path = os.path.join(base_dir, "tpl", "gui", "gui_index.html")
 
     window = webview.create_window(
         title='大纲一键生成 PPT 工具',
-        url=f'file://{html_path}' if sys.platform != 'win32' else html_path,
+        url=html_path,  # 修复: 移除写死的 file://，让 pywebview 自己使用 fileURLWithPath 处理含中文路径
         js_api=api,
         width=850,
         height=700,
