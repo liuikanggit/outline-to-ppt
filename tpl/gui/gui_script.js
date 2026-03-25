@@ -113,6 +113,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // 从 Python 端获取统一版本号并渲染
+    window.addEventListener('pywebviewready', function() {
+        if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.get_version().then(function(ver) {
+                document.title = "Outline to PPT - 智能幻灯片生成器 v" + ver;
+                const verSpan = document.getElementById('app-version');
+                if (verSpan) verSpan.innerText = "v" + ver;
+            });
+        }
+    });
 
 });
 

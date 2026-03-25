@@ -11,12 +11,15 @@ import sys
 import json
 import threading
 import pptx  # 解决打包后找不到 pptx 模块的问题
+from version import __version__
 
 
 # 全局窗体引用，用于调用 evaluate_js
 window = None
 
 class Api:
+    def get_version(self):
+        return __version__
     def __init__(self, current_dir):
         import sys
         
@@ -211,7 +214,7 @@ def main():
     html_path = os.path.join(base_dir, "tpl", "gui", "gui_index.html")
 
     window = webview.create_window(
-        title='大纲一键生成 PPT 工具',
+        title=f'大纲一键生成 PPT 工具 v{__version__}',
         url=html_path,  # 修复: 移除写死的 file://，让 pywebview 自己使用 fileURLWithPath 处理含中文路径
         js_api=api,
         width=850,
