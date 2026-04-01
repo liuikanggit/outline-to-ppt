@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const page1 = document.getElementById('page1');
     const page2 = document.getElementById('page2');
     
-    const openFolderBtn = document.getElementById('openFolderBtn');
+    const saveAsBtn = document.getElementById('saveAsBtn');
     const openPptBtn = document.getElementById('openPptBtn');
     const backBtn = document.getElementById('backBtn');
 
@@ -98,18 +98,17 @@ document.addEventListener('DOMContentLoaded', () => {
         consolePanel.style.display = 'none';
     });
 
-    // 文件夹/PPT 按钮绑定
-    openFolderBtn.addEventListener('click', () => {
-        const shareId = shareIdInput.value.trim();
+    // 💾 另存为按钮导出
+    saveAsBtn.addEventListener('click', () => {
         if (window.pywebview && window.pywebview.api) {
-            window.pywebview.api.open_output_folder(shareId);
+            window.pywebview.api.save_ppt_as();
         }
     });
 
+    // 🖥️ 预览按钮
     openPptBtn.addEventListener('click', () => {
-        const shareId = shareIdInput.value.trim();
         if (window.pywebview && window.pywebview.api) {
-            window.pywebview.api.open_final_ppt(shareId);
+            window.pywebview.api.open_final_ppt();
         }
     });
 

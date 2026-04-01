@@ -10,6 +10,8 @@ import os
 import sys
 import json
 import threading
+import re
+import shutil
 import pptx  # 解决打包后找不到 pptx 模块的问题
 from version import __version__
 
@@ -42,6 +44,10 @@ class Api:
 
         print(f"📦 静态资源目录 (asset_dir): {self.asset_dir}")
         print(f"📂 工作输出目录 (work_dir): {self.work_dir}")
+        
+        # 用于记录本次生成的最终路径，方便“另存为”和“预览”
+        self.last_final_path = None
+        self.last_course_name = "未命名幻灯片"
 
     def generate_ppt(self, share_id):
         """前端点击生成按钮时触发"""
@@ -131,23 +137,53 @@ class Api:
 
     def _cleanup_temp_files(self, share_id):
         """清理过程中间文件，将最终PPT移动到单独的 share_id 文件夹，其余全删"""
-        self._js_call('appendLog("🧹 开始清理系统缓存与整理输出...")')
+        self._js_call('appendLog("清理并整理输出：获取课程名称...")')
         import shutil
         out_dir = os.path.join(self.work_dir, "output")
         final_dir = os.path.join(out_dir, share_id)
         
-        # 1. 创建 share_id 文件夹
+        # 1. 尝试从解析结构中获取课程主题作为文件名
+        course_name = "未命名幻灯片"
+        structure_json = os.path.join(out_dir, "mubu_parsed_structure.json")
+        if os.path.exists(structure_json):
+            try:
+                with open(structure_json, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    course_name = data.get("courseName", "未命名幻灯片")
+            except Exception as e:
+                print(f"读取课程名称失败: {e}")
+
+        # 过滤非法字符
+        course_name = re.sub(r'[\\/:*?"<>|]', '', course_name).strip()
+        if not course_name:
+            course_name = "未命名幻灯片"
+        self.last_course_name = course_name
+
+        # 2. 创建 share_id 文件夹
         if not os.path.exists(final_dir):
             os.makedirs(final_dir, exist_ok=True)
             
-        # 2. 将成功生成的 final_presentation.pptx 移动到该文件夹下
+        # 3. 将成功生成的 final_presentation.pptx 重命名并移动
         source_ppt = os.path.join(out_dir, "final_presentation.pptx")
-        dest_ppt = os.path.join(final_dir, "final_presentation.pptx")
+        filename = f"{course_name}.pptx"
+        dest_ppt = os.path.join(final_dir, filename)
+        
         if os.path.exists(source_ppt):
             shutil.move(source_ppt, dest_ppt)
-            self._js_call(f'appendLog("  - 📁 最终 PPT 妥善存放在: output/{share_id}/final_presentation.pptx")')
+            self.last_final_path = dest_ppt
+            self._js_call(f'appendLog("  - 📁 最终 PPT 已命名为: {filename}")')
             
-        # 3. 清理掉原来的零碎中间文件
+            # 🌟 默认备份一份到系统下载目录
+            try:
+                downloads_dir = os.path.expanduser("~/Downloads")
+                if os.path.exists(downloads_dir):
+                    download_path = os.path.join(downloads_dir, filename)
+                    shutil.copy2(dest_ppt, download_path)
+                    self._js_call(f'appendLog("  - 📥 已自动同步一份到系统【下载】目录")')
+            except Exception as e:
+                print(f"自动保存到下载目录失败: {e}")
+            
+        # 4. 清理掉原来的零碎中间文件
         targets_to_delete = [
             "mubu_response.json",
             "mubu_parsed_structure.json",
@@ -170,27 +206,38 @@ class Api:
 
     def _js_call(self, js_string):
         """安全向前端推送 JS 脚本"""
-        global window
         if window:
             window.evaluate_js(js_string)
 
-    def open_output_folder(self, share_id):
-        """打开输出目录的对应文件夹"""
-        output_dir = os.path.join(self.work_dir, "output", share_id)
-        if not os.path.exists(output_dir):
-             output_dir = os.path.join(self.work_dir, "output")
-             
-        if sys.platform == "darwin":
-            os.system(f'open "{output_dir}"')
-        elif sys.platform == "win32":
-             os.startfile(output_dir)
-        else:
-            subprocess.run(["xdg-open", output_dir])
+    def save_ppt_as(self):
+        """弹出保存对话框，将 PPT 另存为到指定位置"""
+        if not self.last_final_path or not os.path.exists(self.last_final_path):
+            self._js_call('appendLog("⚠️ 未找到生成的 PPT，请先生成。")')
+            return
 
-    def open_final_ppt(self, share_id):
+        # 弹出保存文件对话框
+        file_types = ('PowerPoint Presentations (*.pptx)', 'All files (*.*)')
+        save_path = window.create_file_dialog(
+            webview.FileDialog.SAVE, 
+            save_filename=f"{self.last_course_name}.pptx",
+            file_types=file_types
+        )
+
+        if save_path:
+            # 如果返回的是列表（某些平台下），取第一个
+            if isinstance(save_path, (list, tuple)):
+                save_path = save_path[0]
+            
+            try:
+                shutil.copy2(self.last_final_path, save_path)
+                self._js_call(f'appendLog("✅ 已成功另存为到: {save_path}")')
+            except Exception as e:
+                self._js_call(f'appendLog("❌ 另存为失败: {str(e)}")')
+
+    def open_final_ppt(self):
         """打开最终生成的 PPT"""
-        ppt_path = os.path.join(self.work_dir, "output", share_id, "final_presentation.pptx")
-        if os.path.exists(ppt_path):
+        ppt_path = self.last_final_path
+        if ppt_path and os.path.exists(ppt_path):
             if sys.platform == "darwin":
                 os.system(f'open "{ppt_path}"')
             elif sys.platform == "win32":

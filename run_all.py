@@ -22,7 +22,9 @@ def run_script(cmd_list):
 
 def main():
     # 1. 获取 shareId (支持传参)
-    share_id = "9bmCYuBg_R"  # 默认值
+    # share_id = "9bmCYuBg_R"  # 默认值
+    # share_id = "BrglAEhviR"
+    share_id = "4Gf8Rgni2UR"
     if len(sys.argv) > 1:
         share_id = sys.argv[1]
     

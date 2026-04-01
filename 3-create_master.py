@@ -64,6 +64,19 @@ MAX_SLOTS = len(CHAPTER_SLOTS)
 # 源母版文件（PPT模板.pptx 中的 slideMaster2）
 SOURCE_MASTER_PATH = "ppt/slideMasters/slideMaster2.xml"
 
+# 背景图尺寸定义 (用于计算 1:1 比例)
+# 统一按 151px 高度比例处理，即便素材为 146px 也会拉伸至对齐。
+BG_IMG_DIMENSIONS = {
+    2: (284, 151),
+    3: (343, 151),
+    4: (398, 151),
+    5: (458, 151),
+    6: (508, 151), # 原始 146 -> 强制 151
+    7: (563, 151),
+    8: (623, 151), # 原始 146 -> 强制 151
+    9: (678, 151)
+}
+
 
 # ==================== 工具函数 ====================
 
@@ -384,35 +397,36 @@ def _rebuild_level1_tabs(spTree: etree._Element,
         )
         spTree.append(sp)
 
-    # ④ 移除旧“组合 26” 并进行图片无缝拼接 🖼️
+    # ④ 移除旧“组合 26” 初始背景色块 🖼️
     for grpSp in spTree.findall(f"{{{PML_NS}}}grpSp"):
         cNvPr = grpSp.find(f".//{{{PML_NS}}}cNvPr")
         if cNvPr is not None and "组合 26" in cNvPr.get("name", ""):
             spTree.remove(grpSp)
             break
 
+    # ⑤ 插入单一背景图作为活跃标志 🖼️
     active_slot = min(active_idx, len(level1) - 1) if level1 else 0
     slot_x, _, slot_cx, _ = slots[active_slot]
-    L_zh = len(level1[active_slot].get("zh", ""))
-
-    # 常量坐标比例计算
-    W_L = 104601   # 418407 / 4
-    W_R = 107369   # 418407 / 4 * (155/151)
-    PIC_H = 104601 # 418407 / 4
+    zh_text = level1[active_slot].get("zh", "")
     
-    # 背景图中段色块宽高配置
-    MID_H = int(1.12 * 360000) # 1.12cm
-    mid_cx = int((L_zh * 0.43 + 0.75) * 360000) # 中间色块宽度 = 字数*0.43+0.75
+    # 判定字数 (2~9)
+    L_zh = len(zh_text)
+    N = max(2, min(9, L_zh))
     
-    OVERLAP = 10800 # 极微量重叠(约0.03cm)，消除缝隙但不产生可见交叠
-
-    # 色块与文本框顶面对齐且水平居中对齐在文本框内
-    anchor_y = 0 
-    mid_x = slot_x + (slot_cx - mid_cx) // 2
-
-    # 左边色块出现微小空隙，额外向中间靠拢 0.005cm (1800 EMU)
-    left_x = mid_x - W_L + OVERLAP + 1800
-    right_x = mid_x + mid_cx - OVERLAP
+    # 获取尺寸比例并计算 EMU
+    # 高度固定为 1.12cm (MID_H) = 403200 EMU
+    # 顶部偏移 -0.03cm = -3600 * 3 EMU 
+    TARGET_H_EMU = int(1.12 * 360000)
+    Y_OFFSET_EMU = -int(0.01 * 360000 * 3)
+    
+    img_w_px, img_h_px = BG_IMG_DIMENSIONS.get(N, (343, 151))
+    # 统一按 151 作为分母进行宽度缩放以实现“拉伸至 151”的比例
+    bg_cx = int(TARGET_H_EMU * (img_w_px / 151))
+    bg_cy = TARGET_H_EMU
+    
+    # 水平居中
+    bg_x = slot_x + (slot_cx - bg_cx) // 2
+    bg_y = Y_OFFSET_EMU
 
     def _create_pic_node(p_id, name, r_id, x, y, cx, cy):
          pic = etree.Element(f"{{{PML_NS}}}pic")
@@ -435,10 +449,8 @@ def _rebuild_level1_tabs(spTree: etree._Element,
          etree.SubElement(prstGeom, f"{{{DML_NS}}}avLst")
          return pic
 
-    # ⚠️ 倒序insert(2, ...) 确保置于底层 (在 nvGrpSpPr, grpSpPr 之后)
-    spTree.insert(2, _create_pic_node(1003, "bg_right", "rId6", right_x, anchor_y, W_R, PIC_H))
-    spTree.insert(2, _create_pic_node(1002, "bg_mid", "rId5", mid_x, anchor_y, mid_cx, MID_H))
-    spTree.insert(2, _create_pic_node(1001, "bg_left", "rId4", left_x, anchor_y, W_L, PIC_H))
+    # 插入背景图（rId4），置于底层
+    spTree.insert(2, _create_pic_node(1001, "active_bg", "rId4", bg_x, bg_y, bg_cx, bg_cy))
 
 
 # ==================== 二/三级章节 bar：生成方案 ====================
@@ -473,13 +485,23 @@ def _make_bar_run(parent: etree._Element,
 
 def _estimate_bar_width(items: List[Dict]) -> int:
     """根据章节列表估算 bar 色块宽度（EMU）
-    公式：色块宽度 = 标题总字数 * 0.43 + (标题数 - 1) * 0.7 + 2.2  (cm)
+    公式：汉字*0.43 + 数字/英文*0.33 + (标题数 - 1)*0.7 + 2.2  (cm)
     """
     n = len(items)
     if n == 0:
         return int(2.2 * 360000)
-    total_chars = sum(len(item.get("zh", "")) for item in items)
-    width_cm = total_chars * 0.43 + (n - 1) * 0.7 + 2.2
+    
+    cn_count = 0
+    en_count = 0
+    for item in items:
+        text = item.get("zh", "")
+        for char in text:
+            if ord(char) > 127:
+                cn_count += 1
+            else:
+                en_count += 1
+                
+    width_cm = cn_count * 0.43 + en_count * 0.33 + (n - 1) * 0.7 + 2.2
     return int(width_cm * 360000)
 
 
@@ -654,6 +676,9 @@ def create_master(template_pptx: Path,
             master_groups[m_name] = []
         master_groups[m_name].append(data)
 
+    # 记录每个母版需要的背景图：{ zip_path: source_filename }
+    required_bg_images = {}
+
     with zipfile.ZipFile(template_pptx, "r") as zin:
         # 扫描现有文件状态
         existing_masters = [
@@ -739,22 +764,30 @@ def create_master(template_pptx: Path,
             src_m_rels_tree = etree.fromstring(zin.read(src_m_rels_path))
             logo_rId = "rId3"  # 默认兜底
             theme_rId = "rId2" # 默认兜底
+            logo_image_target = "../media/image1.png" # 默认兜底
+            
             for rel in src_m_rels_tree.findall(f"{{{RELS_NS}}}Relationship"):
                 r_type = rel.get("Type", "")
+                r_id = rel.get("Id")
                 if r_type.endswith("/image"):
-                    logo_rId = rel.get("Id")
+                    logo_rId = r_id
+                    logo_image_target = rel.get("Target")
                 elif r_type.endswith("/theme"):
-                    theme_rId = rel.get("Id")
+                    theme_rId = r_id
 
-            # 聚合 Master 的 Relationships (指向绝对覆盖路径 logo.png 和专属 theme)
+            # 判定活跃标题字数以选择背景图
+            active_zh = level1[active_l1].get("zh", "")
+            N_bg = max(2, min(9, len(active_zh)))
+            bg_target_in_zip = f"active_bg_{curr_master_idx}.png"
+            required_bg_images[f"ppt/media/{bg_target_in_zip}"] = f"{N_bg}个字.png"
+
+            # 聚合 Master 的 Relationships (继承原模板 Logo 路径)
             m_rels_xml_parts = [
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n',
                 '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
                 f'<Relationship Id="{logo_rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="{logo_image_target}"/>',
                 f'<Relationship Id="{theme_rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme{curr_master_idx}.xml"/>',
-                '<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/bg_left.png"/>',
-                '<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/bg_mid.png"/>',
-                '<Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/bg_right.png"/>'
+                f'<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/{bg_target_in_zip}"/>'
             ]
 
             # 注册母版到全局 PPT/CT
@@ -849,14 +882,12 @@ def create_master(template_pptx: Path,
                 if item.filename not in overwrite_set:
                     zout.writestr(item, zin.read(item.filename))
 
-            # 🌟 写入背景素材 🖼️
+            # 🌟 写入背景素材（仅动态背景图，Logo 沿用模板自带） 🖼️
             current_script_dir = os.path.dirname(os.path.abspath(__file__))
-            img_map = {
-                "ppt/media/bg_left.png": os.path.join(current_script_dir, "tpl", "img", "左侧尖角.png"),
-                "ppt/media/bg_mid.png": os.path.join(current_script_dir, "tpl", "img", "中间色块.png"),
-                "ppt/media/bg_right.png": os.path.join(current_script_dir, "tpl", "img", "右侧尖角.png")
-            }
-            for target_p, source_p in img_map.items():
+
+            # 写入各母版专属背景图
+            for target_p, img_name in required_bg_images.items():
+                source_p = os.path.join(current_script_dir, "tpl", "img", img_name)
                 if os.path.exists(source_p):
                     with open(source_p, 'rb') as f_img:
                         zout.writestr(target_p, f_img.read())

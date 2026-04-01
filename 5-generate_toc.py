@@ -68,9 +68,18 @@ def create_toc_chapter_box(chapter_dict, ch_idx, x, y, w, h, sp_id):
 
     return sp
 
+def _estimate_toc_box_width(ch_dict):
+    """根据章节字数估算目录磁铁宽度 (16pt 微软雅黑)"""
+    text = ch_dict.get('chapterName', '')
+    # 16pt 汉字宽约 203,200 EMU
+    # 基础边距填充 400,000 EMU
+    w = len(text) * 203200 + 400000
+    return max(w, 1300000) # 保持一个最小宽度
+
 def create_toc_slide(prs, slide, chapters):
     """
-    修改页面，横向填充一级章节
+    修改页面，自适应排版填充一级章节磁铁。
+    逻辑：根据字数动态计算宽度，并贪心分行，每一行居中。
     """
     spTree = slide.shapes._spTree
     shapes_to_remove = []
@@ -88,32 +97,67 @@ def create_toc_slide(prs, slide, chapters):
     for sp in shapes_to_remove:
         spTree.remove(sp)
 
-    # 2. 横向排开
-    num_chapters = len(chapters)
-    if num_chapters == 0:
+    if not chapters:
          return
 
-    # 依照历史常数布局
-    chapter_box_width = 1300000 
-    chapter_box_height = 461665
-    chapter_gap = 120000 
-    # 垂直居中
-    # 黄金比例垂直布局：上方空隙占总剩余空隙的 38.2% (向上平移，保持视觉平衡)
-    toc_area_top = int((prs.slide_height - chapter_box_height) * 0.382)
-
+    # 2. 动态布局计算
     slide_width = prs.slide_width
-    total_width = num_chapters * chapter_box_width + (num_chapters - 1) * chapter_gap
-    toc_area_left = (slide_width - total_width) // 2
+    slide_height = prs.slide_height
+    
+    chapter_box_height = 461665
+    chapter_gap_x = 180000 
+    chapter_gap_y = 150000
+
+    # 预计算所有磁铁宽度
+    box_infos = []
+    for ch in chapters:
+        w = _estimate_toc_box_width(ch)
+        box_infos.append({"chapter": ch, "width": w})
+
+    # 贪心分行
+    rows = []
+    current_row = []
+    current_row_w = 0
+    
+    for info in box_infos:
+        w = info["width"]
+        # 如果当前行已不为空，且加入新磁铁后超出幻灯片宽度 (留出左右边缘各 500,000 EMU)
+        if current_row and (current_row_w + chapter_gap_x + w > slide_width - 1000000):
+            rows.append(current_row)
+            current_row = [info]
+            current_row_w = w
+        else:
+            if current_row:
+                current_row_w += chapter_gap_x
+            current_row.append(info)
+            current_row_w += w
+    if current_row:
+        rows.append(current_row)
+
+    # 计算整体垂直高度并垂直居中 (黄金比例)
+    num_rows = len(rows)
+    total_block_height = num_rows * chapter_box_height + (num_rows - 1) * chapter_gap_y
+    toc_area_top_base = int((slide_height - total_block_height) * 0.382)
 
     sp_id = 1000
-    for ch_idx, chapter in enumerate(chapters):
-        x = toc_area_left + ch_idx * (chapter_box_width + chapter_gap)
-        # 添加章节 Box 元素
-        chapter_sp = create_toc_chapter_box(chapter, ch_idx, x, toc_area_top, chapter_box_width, chapter_box_height, sp_id)
-        spTree.append(chapter_sp)
-        sp_id += 1
+    for row_idx, row_items in enumerate(rows):
+        # 计算当前行的总宽度以便水平居中
+        row_total_w = sum(it["width"] for it in row_items) + (len(row_items) - 1) * chapter_gap_x
+        row_left = (slide_width - row_total_w) // 2
+        
+        y = toc_area_top_base + row_idx * (chapter_box_height + chapter_gap_y)
+        
+        current_x = row_left
+        for info in row_items:
+            chapter_sp = create_toc_chapter_box(
+                info["chapter"], sp_id - 1000, 
+                current_x, y, info["width"], chapter_box_height, sp_id
+            )
+            spTree.append(chapter_sp)
+            current_x += info["width"] + chapter_gap_x
+            sp_id += 1
 
-    print(f"  [TOC] 已为 [{num_chapters}] 个一级章节生成横向目录磁贴。")
+    print(f"  [TOC] 已完成自适应排版。总计 [{len(chapters)}] 个章节，分为 [{num_rows}] 行。")
 
 def main():
     import argparse

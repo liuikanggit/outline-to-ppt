@@ -46,6 +46,8 @@ pyinstaller --onedir --noconsole --noconfirm \
     --add-data "6-generate_body.py:." \
     --icon "app_icon.icns" \
     --hidden-import "lxml" \
+    --hidden-import "html.parser" \
+    --hidden-import "html" \
     --name "大纲生成PPT" gui_app.py
 
 

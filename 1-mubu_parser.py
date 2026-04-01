@@ -2,16 +2,54 @@ import json
 import os
 import re
 import html
+from html.parser import HTMLParser
 
 # ----------------- 基础工具函数 (复用) -----------------
 def format_node(node):
     """去除幕布节点文本中的 HTML 标签"""
     text = node.get('text', '')
-    # 去除包含 <span> 标签等 HTML
     text = re.sub(r'<[^>]+>', '', text)
-    # 解码 HTML 实体, 如 &nbsp;
     text = html.unescape(text)
     return text.strip()
+
+def format_note(node):
+    """提取节点的附注(note)并清理 HTML"""
+    text = node.get('note', '')
+    text = re.sub(r'<[^>]+>', '', text)
+    text = html.unescape(text)
+    return text.strip()
+
+class HTMLTableParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.rows = []
+        self.current_row = []
+        self.current_cell = ""
+        self.in_cell = False
+        self.is_header = False
+        self.headers = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'tr':
+            self.current_row = []
+        elif tag in ['td', 'th']:
+            self.in_cell = True
+            self.current_cell = ""
+            if tag == 'th': self.is_header = True
+
+    def handle_data(self, data):
+        if self.in_cell:
+            self.current_cell += data
+
+    def handle_endtag(self, tag):
+        if tag in ['td', 'th']:
+            self.in_cell = False
+            self.current_row.append(self.current_cell.strip())
+            if self.is_header:
+                self.is_header = False
+        elif tag == 'tr':
+            if self.current_row:
+                self.rows.append(self.current_row)
 
 def parse_bilingual(text):
     """精确切分中文与英文"""
@@ -32,6 +70,8 @@ def build_sub_content(node):
     sub_list = []
     for child in node.get('children', []):
         text = format_node(child)
+        if text.startswith('*'):
+            text = text[1:].strip()
         cn, _ = parse_bilingual(text)
         if cn: # 排除纯空格节点
             sub_list.append({
@@ -50,35 +90,70 @@ def recursive_parse_v2(node, level, code_prefix, parent_cn, parent_en, index_pat
     index_path: 数组形式的索引路径，如 [0, 1]
     """
     text = format_node(node)
+    # 处理当前节点自身的星号（如果它作为子章节进入）
+    if text.startswith('*'):
+        text = text[1:].strip()
+        
     cn, en = parse_bilingual(text)
     if not en: 
         en = parent_en # 继承上级英文名(如有需要)
+    note = format_note(node)
 
     chapter = {
         "code": code_prefix,
         "level": level,
         "chapterName": cn,
         "chapterEnName": en,
+        "note": note,
         "content": [],
         "subChapter": []
     }
 
     children = node.get('children', [])
     for i, child in enumerate(children):
+        raw_text = child.get('text', '')
         c_text = format_node(child)
+        
+        # 核心逻辑：检测并处理强制内容标记 '*'
+        force_content = False
+        if c_text.startswith('*'):
+            force_content = True
+            c_text = c_text[1:].strip()
+            
         c_cn, c_en = parse_bilingual(c_text)
         
         c_images = child.get('images', [])
         c_has_image = len(c_images) > 0
         
+        # [NEW] 检测 HTML 表格
+        has_table = '<table' in raw_text
+        
         c_code = f"{code_prefix}.{i+1}"
         # 当前子节点的索引路径
         c_index_path = index_path + [i]
 
-        # 核心判定规则：任何节点只要 【带有图片】 或 【文字长度 > 9】 或 【当前章节层级 >= 3】, 均判定为本章节的 Content 
-        is_content = c_has_image or (len(c_cn) > 16)  or (level >= 3)
+        # 核心判定规则更新：增加 force_content 和 has_table
+        # 表格节点一定是内容页面
+        is_content = force_content or has_table or c_has_image or (len(c_text) > 16) or (level + 1 >= 4) or (not child.get('children', []))
 
         if is_content:
+            if has_table:
+                # 解析 HTML 表格
+                parser = HTMLTableParser()
+                parser.feed(raw_text)
+                if parser.rows:
+                    chapter["content"].append({
+                        "title": cn,
+                        "titleEn": en,
+                        "index": c_index_path,
+                        "type": "table",
+                        "table": {
+                            "rows": parser.rows
+                        }
+                    })
+                    # 处理完表格后，不再处理图片或文字，直接跳到下一个子节点
+                    continue
+
             if c_has_image:
                 # A. 图片内容: 根据 TS 结构, imageContent 在 content 里
                 for img in c_images:
@@ -92,8 +167,8 @@ def recursive_parse_v2(node, level, code_prefix, parent_cn, parent_en, index_pat
                             "uri": img.get("uri", "")
                         }
                     })
-            # 如果它同时包含文字 (虽然 Mubu 里图片节点往往是文字节点的附属, 但也要防空)
-            if c_cn:
+            elif c_cn:
+                # B. 文字内容: 包含递归子列表
                 new_text_item = {
                     "text": c_cn,
                     "hasBullet": False,

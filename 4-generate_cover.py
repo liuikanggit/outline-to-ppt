@@ -88,13 +88,13 @@ def main():
     print(f"  [替换状态] 英文版替换: {'✅' if replaced_en else '❓ 没找到占位符'}")
 
     # 4. “免责声明” 文本框自适应位移
-    # 估算主标题行数 (中文汉字约14字一行, 英文按24字符一行更精确，因为英文单词换行间隙大)
-    cn_lines = math.ceil(len(course_name) / 14)
-    en_lines = math.ceil(len(course_en_name) / 24)
+    # 估算主标题行数 (根据用户反馈：中文汉字约 8 字一行，英文按 16 字符一行更精确)
+    cn_lines = math.ceil(len(course_name) / 8)
+    en_lines = math.ceil(len(course_en_name) / 16)
     extra = max(0, cn_lines - 1) + max(0, en_lines - 1)
 
     if extra > 0:
-        offset = extra * 382000  # EMU 单位位移值 (382000 完美适配单行高度)
+        offset = extra * 600000  # EMU 单位位移值 (600000 适配 48pt 字号的多行间距)
         adjusted_count = 0
         disclaimer_phrase = "未经授权严禁"
         for shp in cover_slide.shapes:
