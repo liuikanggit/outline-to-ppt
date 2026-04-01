@@ -216,7 +216,7 @@ class Api:
             return
 
         # 弹出保存文件对话框
-        file_types = ('PowerPoint Presentations (*.pptx)', 'All files (*.*)')
+        file_types = ('PowerPoint 演示文稿 (*.pptx)', '所有文件 (*.*)')
         save_path = window.create_file_dialog(
             webview.FileDialog.SAVE, 
             save_filename=f"{self.last_course_name}.pptx",
@@ -231,8 +231,15 @@ class Api:
             try:
                 shutil.copy2(self.last_final_path, save_path)
                 self._js_call(f'appendLog("✅ 已成功另存为到: {save_path}")')
+                
+                # 弹出成功提示消息
+                safe_path = save_path.replace("\\", "\\\\").replace('"', '\\"')
+                self._js_call(f'alert("保存成功！\\n文件路径：{safe_path}");')
             except Exception as e:
                 self._js_call(f'appendLog("❌ 另存为失败: {str(e)}")')
+                
+                safe_err = str(e).replace("\\", "\\\\").replace('"', '\\"')
+                self._js_call(f'alert("保存失败:\\n{safe_err}");')
 
     def open_final_ppt(self):
         """打开最终生成的 PPT"""
@@ -269,7 +276,28 @@ def main():
         resizable=True
     )
 
-    webview.start(debug=False)
+    chinese_loc = {
+        'global.quitConfirmation': '确定要退出吗？',
+        'global.ok': '确定',
+        'global.quit': '退出',
+        'global.cancel': '取消',
+        'global.saveFile': '保存文件',
+        'cocoa.menu.about': '关于',
+        'cocoa.menu.services': '服务',
+        'cocoa.menu.view': '视图',
+        'cocoa.menu.edit': '编辑',
+        'cocoa.menu.hide': '隐藏',
+        'cocoa.menu.hideOthers': '隐藏其他',
+        'cocoa.menu.showAll': '显示全部',
+        'cocoa.menu.quit': '退出',
+        'cocoa.menu.fullscreen': '全屏',
+        'cocoa.menu.cut': '剪切',
+        'cocoa.menu.copy': '复制',
+        'cocoa.menu.paste': '粘贴',
+        'cocoa.menu.selectAll': '全选',
+    }
+
+    webview.start(localization=chinese_loc, debug=False)
 
 if __name__ == '__main__':
     main()

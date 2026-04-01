@@ -50,9 +50,15 @@ pyinstaller --onedir --noconsole --noconfirm \
     --hidden-import "html" \
     --name "大纲生成PPT" gui_app.py
 
-
-
 echo "==========================================="
+
+echo "🔤 正在修改 Info.plist 以支持 macOS 原生中文弹窗界面..."
+APP_PLIST="dist/大纲生成PPT.app/Contents/Info.plist"
+if [ -f "$APP_PLIST" ]; then
+    plutil -replace CFBundleLocalizations -json '["zh_CN", "zh_TW", "en"]' "$APP_PLIST"
+    plutil -replace CFBundleDevelopmentRegion -string "zh_CN" "$APP_PLIST"
+    echo "✅ Info.plist 已完成多语言本地化配置"
+fi
 
 
 echo "✅ 打包成功！"
