@@ -22,6 +22,7 @@ import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from lxml import etree
+from xml.sax.saxutils import escape
 
 
 # ==================== XML 命名空间 ====================
@@ -785,9 +786,9 @@ def create_master(template_pptx: Path,
             m_rels_xml_parts = [
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n',
                 '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
-                f'<Relationship Id="{logo_rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="{logo_image_target}"/>',
+                f'<Relationship Id="{logo_rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="{escape(logo_image_target)}"/>',
                 f'<Relationship Id="{theme_rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme{curr_master_idx}.xml"/>',
-                f'<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/{bg_target_in_zip}"/>'
+                f'<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/{escape(bg_target_in_zip)}"/>'
             ]
 
             # 注册母版到全局 PPT/CT
@@ -805,24 +806,26 @@ def create_master(template_pptx: Path,
                 _ensure_ct_override(ct_tree, f"/ppt/slideLayouts/slideLayout{curr_layout_idx}.xml", 
                                     "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml")
 
-                # 构建一个纯净的基础版面骨架
-                l_xml_str = (
-                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-                    '<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
-                    ' xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
-                    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
-                    ' type="blank" preserve="1">'
-                    f'<p:cSld name="{layout_name}">'
-                    '<p:spTree>'
-                    '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
-                    '<p:grpSpPr/>'
-                    '</p:spTree>'
-                    '</p:cSld>'
-                    '</p:sldLayout>'
-                )
+                # 构建一个纯净的基础版面骨架 (不使用字符串格式化以防止 XML 解析错误)
+                l_tree = etree.Element(f"{{{PML_NS}}}sldLayout",
+                                       nsmap={"a": DML_NS, "p": PML_NS, "r": R_NS},
+                                       type="blank", preserve="1")
+                l_cSld = etree.SubElement(l_tree, f"{{{PML_NS}}}cSld", name=layout_name)
+                l_spTree = etree.SubElement(l_cSld, f"{{{PML_NS}}}spTree")
                 
-                l_tree = etree.fromstring(l_xml_str.encode("utf-8"))
-                l_spTree = l_tree.find(f".//{{{PML_NS}}}spTree")
+                # nvGrpSpPr
+                l_nvGrpSpPr = etree.SubElement(l_spTree, f"{{{PML_NS}}}nvGrpSpPr")
+                etree.SubElement(l_nvGrpSpPr, f"{{{PML_NS}}}cNvPr", id="1", name="")
+                etree.SubElement(l_nvGrpSpPr, f"{{{PML_NS}}}cNvGrpSpPr")
+                etree.SubElement(l_nvGrpSpPr, f"{{{PML_NS}}}nvPr")
+                
+                # grpSpPr
+                l_grpSpPr = etree.SubElement(l_spTree, f"{{{PML_NS}}}grpSpPr")
+                l_xfrm = etree.SubElement(l_grpSpPr, f"{{{DML_NS}}}xfrm")
+                etree.SubElement(l_xfrm, f"{{{DML_NS}}}off", x="0", y="0")
+                etree.SubElement(l_xfrm, f"{{{DML_NS}}}ext", cx="0", cy="0")
+                etree.SubElement(l_xfrm, f"{{{DML_NS}}}chOff", x="0", y="0")
+                etree.SubElement(l_xfrm, f"{{{DML_NS}}}chExt", cx="0", cy="0")
 
                 # 在 此版面 的 spTree 图层上渲染专属的 3 级 bar
                 l3_ch = data.get("level3Chapter", {})
@@ -877,6 +880,19 @@ def create_master(template_pptx: Path,
                 "ppt/_rels/presentation.xml.rels",
                 "[Content_Types].xml",
             }
+            # 为了防止 duplicate name, 收集所有这次将要生成的动态文件
+            for m_item in masters_to_write:
+                m_idx = m_item["m_idx"]
+                overwrite_set.add(f"ppt/slideMasters/slideMaster{m_idx}.xml")
+                overwrite_set.add(f"ppt/slideMasters/_rels/slideMaster{m_idx}.xml.rels")
+                overwrite_set.add(f"ppt/theme/theme{m_idx}.xml")
+            for l_item in layouts_to_write:
+                l_idx = l_item["l_idx"]
+                overwrite_set.add(f"ppt/slideLayouts/slideLayout{l_idx}.xml")
+                overwrite_set.add(f"ppt/slideLayouts/_rels/slideLayout{l_idx}.xml.rels")
+            for target_p in required_bg_images.keys():
+                overwrite_set.add(target_p)
+
             # 复制静态部分
             for item in zin.infolist():
                 if item.filename not in overwrite_set:

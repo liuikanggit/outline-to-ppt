@@ -14,7 +14,7 @@ from lxml import etree
 from pptx import Presentation
 from pptx.util import Emu, Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 
 # ----------------- Open XML 命名空间 -----------------
 NSMAP = {
@@ -208,6 +208,7 @@ def create_chapter_slide(prs, template_slide, chapter):
 # ----------------- 3. 内容页生成 -----------------
 def write_title_box(slide, page_title, page_note=""):
     title_box = slide.shapes.add_textbox(TITLE_L, TITLE_T, TITLE_W, TITLE_H)
+    title_box.text_frame.auto_size = MSO_AUTO_SIZE.NONE
     t_p = title_box.text_frame.paragraphs[0]
     
     # 第一行：主标题
@@ -237,6 +238,7 @@ def create_content_slide_optimized(prs, content_layout, page_title, items, font_
     write_title_box(new_slide, page_title, page_note)
     
     body_box = new_slide.shapes.add_textbox(BODY_L, BODY_T, BODY_W, BODY_H)
+    body_box.text_frame.auto_size = MSO_AUTO_SIZE.NONE
     body_box.text_frame.word_wrap = True
     txBody = body_box._element.find('.//' + f'{{{NSMAP["p"]}}}txBody')
     if txBody is None:
@@ -264,7 +266,7 @@ def create_content_slide_optimized(prs, content_layout, page_title, items, font_
             elif level >= 1:
                 pPr.set('marL', str(bullet_styles[lvl_idx][0]))
             
-            defRPr = etree.SubElement(pPr, f'{{{NSMAP["a"]}}}defRPr', sz=str(font_sz_val))
+            defRPr = etree.SubElement(pPr, f'{{{NSMAP["a"]}}}defRPr')
             etree.SubElement(defRPr, f'{{{NSMAP["a"]}}}latin', typeface='Microsoft YaHei Light')
             etree.SubElement(defRPr, f'{{{NSMAP["a"]}}}ea', typeface='Microsoft YaHei Light')
             run = etree.SubElement(para, f'{{{NSMAP["a"]}}}r')
@@ -436,18 +438,73 @@ def main():
 
     for ch in data.get("chapters", []): expand(ch, [])
 
-    # Cleanup template slides
+    # =========================================================
+    # 清理模板残留页面 + 重排幻灯片顺序
+    # =========================================================
+    # 模板结构（5页）:
+    #   [0] 封面  [1] 目录  [2] 章节样例  [3] 内容样例  [4] 结尾页
+    # 目标: 删除 [2] 和 [3]，保留 [0][1] + 动态生成页 + [4]结尾
+    # =========================================================
+    
+    R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    PML_NS_BODY = 'http://schemas.openxmlformats.org/presentationml/2006/main'
+    CT_NS = 'http://schemas.openxmlformats.org/package/2006/content-types'
+    
     sld_id_list = prs.slides._sldIdLst
     ids = list(sld_id_list)
-    if len(ids) > 4:
-        # Keep 0(Cover), 1(TOC), then added slides, then 4(Ending)
-        cover, toc, end = ids[0], ids[1], ids[4]
-        new_page_ids = ids[5:]
-        for i in ids: sld_id_list.remove(i)
-        sld_id_list.append(cover); sld_id_list.append(toc)
-        for i in new_page_ids: sld_id_list.append(i)
-        sld_id_list.append(end)
     
+    if len(ids) > 4:
+        # 需要物理删除的模板样例页：索引 2 和 3
+        template_sample_ids = [ids[2], ids[3]]
+        
+        # 第一步：从 python-pptx 底层彻底删除这两个 slide 的 Part 和 Relationship
+        # python-pptx 1.0.2 保存时会根据 parts 关系链动态重建 [Content_Types].xml，
+        # 所以只需断开关系链即可，无需手动操作 Content_Types
+        for sld_id_elem in template_sample_ids:
+            rId = sld_id_elem.get(f'{{{R_NS}}}id')
+            if rId and rId in prs.part.rels:
+                rel = prs.part.rels[rId]
+                slide_part = rel.target_part
+                
+                # 删除 slide 自身的所有子关系（如 notesSlide、slideLayout 引用等）
+                # 这一步确保 slide part 不再被任何关系链引用，
+                # 从而彻底从 package 的 iter_parts 遍历中消失
+                for sub_rId in list(slide_part.rels.keys()):
+                    slide_part.drop_rel(sub_rId)
+                
+                # 从 presentation part 中移除该关系
+                prs.part.drop_rel(rId)
+            
+            # 从 sldIdLst 中移除该条目
+            sld_id_list.remove(sld_id_elem)
+        
+        # 第二步：重排剩余幻灯片顺序 —— Cover, TOC, 动态页..., 结尾页
+        remaining_ids = list(sld_id_list)
+        # 现在 remaining_ids 应该是: [cover, toc, end, ...dynamic_slides...]
+        # cover = remaining[0], toc = remaining[1], end = remaining[2], dynamic = remaining[3:]
+        if len(remaining_ids) > 2:
+            cover = remaining_ids[0]
+            toc = remaining_ids[1]
+            end = remaining_ids[2]  # 删除了 [2][3] 后，原来的 [4] 变成了 [2]
+            dynamic_slides = remaining_ids[3:]
+            
+            for i in remaining_ids:
+                sld_id_list.remove(i)
+            
+            sld_id_list.append(cover)
+            sld_id_list.append(toc)
+            for i in dynamic_slides:
+                sld_id_list.append(i)
+            sld_id_list.append(end)
+    
+    # 确保所有幻灯片的 grpSpPr 都拥有 xfrm 以满足 Office 严格的 XSD 校验标准
+    for slide in prs.slides:
+        spTree = slide.shapes._spTree
+        grpSpPr = spTree.find('{http://schemas.openxmlformats.org/presentationml/2006/main}grpSpPr')
+        if grpSpPr is not None and len(grpSpPr) == 0:
+            xfrm = etree.fromstring('<a:xfrm xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm>')
+            grpSpPr.append(xfrm)
+
     prs.save(args.output_pptx)
     print(f"✅ 生成完成: {args.output_pptx}")
 

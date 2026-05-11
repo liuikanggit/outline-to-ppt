@@ -58,6 +58,11 @@ if [ -f "$APP_PLIST" ]; then
     plutil -replace CFBundleLocalizations -json '["zh_CN", "zh_TW", "en"]' "$APP_PLIST"
     plutil -replace CFBundleDevelopmentRegion -string "zh_CN" "$APP_PLIST"
     echo "✅ Info.plist 已完成多语言本地化配置"
+
+    # 修改 Info.plist 会破坏 PyInstaller 生成的默认签名，导致 Mac 提示“文件已损坏”
+    echo "🔏 正在修复重签名，防止 Mac 提示文件损坏..."
+    codesign --force --deep --sign - "dist/大纲生成PPT.app"
+    echo "✅ 重签名完成！"
 fi
 
 
