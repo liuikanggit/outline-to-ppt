@@ -28,3 +28,5 @@ build/
 dist/
 *.spec
 
+
+.claude/

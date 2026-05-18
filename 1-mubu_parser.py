@@ -66,20 +66,97 @@ def parse_bilingual(text):
 
 # ----------------- v2 新增递归工具 -----------------
 def build_sub_content(node):
-    """递归构建 TextItem: { text: '...', hasBullet: True, subContent: [] }"""
+    """
+    递归构建子内容列表，支持文字与表格混合。
+    返回列表中每项要么是文字节点（hasBullet=True），
+    要么是表格标记（__type='table'），供上层拆分。
+    """
     sub_list = []
     for child in node.get('children', []):
-        text = format_node(child)
-        if text.startswith('*'):
-            text = text[1:].strip()
-        cn, _ = parse_bilingual(text)
-        if cn: # 排除纯空格节点
-            sub_list.append({
-                "text": cn,
-                "hasBullet": True,
-                "subContent": build_sub_content(child)
-            })
+        raw_text = child.get('text', '')
+        has_table = '<table' in raw_text
+        if has_table:
+            parser = HTMLTableParser()
+            parser.feed(raw_text)
+            if parser.rows:
+                sub_list.append({'__type': 'table', 'rows': parser.rows})
+        else:
+            text = format_node(child)
+            if text.startswith('*'):
+                text = text[1:].strip()
+            cn, _ = parse_bilingual(text)
+            if cn:
+                sub_list.append({
+                    'text': cn,
+                    'hasBullet': True,
+                    'subContent': build_sub_content(child)
+                })
     return sub_list
+
+
+def flush_text_group(chapter, title, title_en, index_path, text_group):
+    """将积累的文字节点写入 chapter content（内部工具函数）"""
+    if not text_group:
+        return
+    # 过滤掉 subContent 中的表格标记，只保留纯文字子项
+    def clean_sub(items):
+        return [
+            {**item, 'subContent': clean_sub(item.get('subContent', []))}
+            for item in items if item.get('__type') != 'table'
+        ]
+    cleaned = [
+        {**item, 'subContent': clean_sub(item.get('subContent', []))}
+        for item in text_group
+    ]
+    if chapter['content'] and chapter['content'][-1]['type'] == 'text':
+        chapter['content'][-1]['text'].extend(cleaned)
+    else:
+        chapter['content'].append({
+            'title': title,
+            'titleEn': title_en,
+            'index': index_path,
+            'type': 'text',
+            'text': cleaned
+        })
+
+
+def explode_sub_content(chapter, title, title_en, index_path, top_text_item):
+    """
+    将一个顶层文字项（含混合 subContent）拆分为：
+    若干文字块 + 表格块，按原始顺序写入 chapter content。
+    """
+    sub = top_text_item.get('subContent', [])
+    has_embedded_table = any(item.get('__type') == 'table' for item in sub)
+
+    if not has_embedded_table:
+        # 没有嵌入表格，走正常路径
+        flush_text_group(chapter, title, title_en, index_path, [top_text_item])
+        return
+
+    # 有嵌入表格：按顺序拆分
+    # 第一段：顶层文字节点本身（subContent 为表格前的文字子项）
+    pending_sub = []
+    for item in sub:
+        if item.get('__type') == 'table':
+            # 先把到目前为止的文字部分写出去
+            partial_item = {**top_text_item, 'subContent': pending_sub}
+            flush_text_group(chapter, title, title_en, index_path, [partial_item])
+            pending_sub = []
+            # 写表格块
+            chapter['content'].append({
+                'title': title,
+                'titleEn': title_en,
+                'index': index_path,
+                'type': 'table',
+                'table': {'rows': item['rows']}
+            })
+        else:
+            pending_sub.append(item)
+
+    # 剩余文字
+    if pending_sub:
+        partial_item = {**top_text_item, 'subContent': pending_sub}
+        flush_text_group(chapter, title, title_en, index_path, [partial_item])
 
 def recursive_parse_v2(node, level, code_prefix, parent_cn, parent_en, index_path):
     """
@@ -168,24 +245,13 @@ def recursive_parse_v2(node, level, code_prefix, parent_cn, parent_en, index_pat
                         }
                     })
             elif c_cn:
-                # B. 文字内容: 包含递归子列表
+                # B. 文字内容：递归子列表可能含表格，需拆分
                 new_text_item = {
                     "text": c_cn,
                     "hasBullet": False,
-                    "subContent": build_sub_content(child) # 子文本后代沉降
+                    "subContent": build_sub_content(child)
                 }
-                
-                # 检查最后一个 content 是否是 text 类型，如果是，则聚合
-                if chapter["content"] and chapter["content"][-1]["type"] == "text":
-                    chapter["content"][-1]["text"].append(new_text_item)
-                else:
-                    chapter["content"].append({
-                        "title": cn,
-                        "titleEn": en,
-                        "index": c_index_path,
-                        "type": "text",
-                        "text": [new_text_item]
-                    })
+                explode_sub_content(chapter, cn, en, c_index_path, new_text_item)
         else:
             # B. 判定为子章节, 递归
             sub_ch = recursive_parse_v2(child, level + 1, c_code, cn, en, c_index_path)

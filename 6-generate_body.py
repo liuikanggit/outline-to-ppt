@@ -416,23 +416,33 @@ def main():
         contents = chapter.get('content', [])
         if contents:
             lay = get_layout_by_names(prs, tm, tl, prs.slides[3].slide_layout)
-            # Text
-            txts = [c for c in contents if c.get('type') == 'text']
-            if txts:
-                for pg, sz in paginate_contents_custom(txts):
-                    added_slides.append(create_content_slide_optimized(prs, lay, cn, pg, sz, note))
-            # Image
-            for img in [c for c in contents if c.get('type') == 'image']:
-                s = prs.slides.add_slide(lay)
-                write_title_box(s, cn, note)
-                append_images_to_slide(s, img.get('image', {}), prs)
-                added_slides.append(s)
-            # Table
-            for tbl in [c for c in contents if c.get('type') == 'table']:
-                s = prs.slides.add_slide(lay)
-                write_title_box(s, cn, note)
-                add_table_to_slide(s, tbl.get('table', {}), prs)
-                added_slides.append(s)
+            # 按原始顺序渲染，文字块可被图片/表格打断，保持插入顺序
+            i = 0
+            while i < len(contents):
+                c = contents[i]
+                ctype = c.get('type')
+                if ctype == 'text':
+                    # 收集连续的文字块一起分页
+                    txt_group = []
+                    while i < len(contents) and contents[i].get('type') == 'text':
+                        txt_group.append(contents[i])
+                        i += 1
+                    for pg, sz in paginate_contents_custom(txt_group):
+                        added_slides.append(create_content_slide_optimized(prs, lay, cn, pg, sz, note))
+                elif ctype == 'image':
+                    s = prs.slides.add_slide(lay)
+                    write_title_box(s, cn, note)
+                    append_images_to_slide(s, c.get('image', {}), prs)
+                    added_slides.append(s)
+                    i += 1
+                elif ctype == 'table':
+                    s = prs.slides.add_slide(lay)
+                    write_title_box(s, cn, note)
+                    add_table_to_slide(s, c.get('table', {}), prs)
+                    added_slides.append(s)
+                    i += 1
+                else:
+                    i += 1
 
         for sub in chapter.get('subChapter', []): expand(sub, names)
 
