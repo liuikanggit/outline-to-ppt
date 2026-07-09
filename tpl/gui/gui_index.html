@@ -61,6 +61,38 @@
                 </div>
             </section>
         </div>
+
+        <!-- ================= PAGE 3: 失败结果 ================= -->
+        <div id="page3" style="display: none;">
+            <section class="result-section glass-panel error-section">
+                <div class="error-banner">
+                    <div class="error-icon-large">⚠️</div>
+                    <h2 class="gradient-text">生成失败</h2>
+                    <p class="subtitle" id="errorStep" style="margin-bottom: 5px;"></p>
+                    <span class="error-badge" id="errorCategory"></span>
+                </div>
+
+                <div class="error-detail-panel">
+                    <div class="error-detail-row" id="errorLocationRow" style="display: none;">
+                        <strong>📍 具体定位（幕布原文中的哪一段）：</strong>
+                        <p id="errorLocation" class="error-location-text"></p>
+                    </div>
+                    <div class="error-detail-row">
+                        <strong>可能原因与建议：</strong>
+                        <p id="errorAdvice"></p>
+                    </div>
+                    <div class="error-detail-row">
+                        <strong>错误摘要：</strong>
+                        <p id="errorSummary" class="error-summary-text"></p>
+                    </div>
+                </div>
+
+                <div class="footer-buttons">
+                    <button id="openLogBtn" class="btn-secondary">📄 打开日志文件（发给开发者）</button>
+                    <button id="backFromErrorBtn" class="btn-ghost">↺ 返回重试</button>
+                </div>
+            </section>
+        </div>
     </main>
 
     <script src="gui_script.js"></script>

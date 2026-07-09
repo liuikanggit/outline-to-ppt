@@ -66,8 +66,17 @@ if [ -f "$APP_PLIST" ]; then
 fi
 
 
-echo "✅ 打包成功！"
+echo "🧹 正在清除隔离属性，防止对方收到后提示已损坏..."
+xattr -cr "dist/大纲生成PPT.app"
+echo "✅ 隔离属性已清除！"
 
-echo "📂 最终独立的程序存放在: $(pwd)/dist/ 目录下"
-echo "👉 您可以直接进入 dist 目录双击运行「大纲生成PPT」"
+echo "📦 正在压缩为 zip..."
+cd dist
+rm -f "大纲生成PPT.zip"
+zip -ry "大纲生成PPT.zip" "大纲生成PPT.app"
+cd ..
+echo "✅ 压缩完成！"
+
+echo "✅ 打包成功！"
+echo "📂 可分发的压缩包: $(pwd)/dist/大纲生成PPT.zip"
 echo "==========================================="

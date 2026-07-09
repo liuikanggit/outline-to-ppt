@@ -12,12 +12,59 @@ import json
 import threading
 import re
 import shutil
+import traceback
+import datetime
+import urllib.error
 import pptx  # 解决打包后找不到 pptx 模块的问题
 from version import __version__
 
 
 # 全局窗体引用，用于调用 evaluate_js
 window = None
+
+# 流水线各步骤的中文名称，用于报错时告诉用户具体卡在哪一步
+STEP_LABELS = {
+    "0-fetch_mubu": "第1步：拉取幕布文档",
+    "1-mubu_parser": "第2步：解析大纲结构",
+    "2-generate_master_json": "第3步：生成章节母版信息",
+    "3-create_master": "第4步：生成 PPT 母版/导航条",
+    "4-generate_cover": "第5步：生成封面页",
+    "5-generate_toc": "第6步：生成总目录页",
+    "6-generate_body": "第7步：生成正文页面",
+}
+
+# 网络/链接相关的异常类型：通常是 shareId 填错、文档设了密码、断网等
+NETWORK_ERROR_TYPES = (urllib.error.URLError, TimeoutError, ConnectionError)
+# 数据结构相关的异常类型：多半是幕布大纲里存在特殊内容（空表格、超长文本、异常字符等）导致脚本处理时崩溃
+CONTENT_ERROR_TYPES = (IndexError, KeyError, ValueError, AttributeError, TypeError, json.JSONDecodeError)
+
+
+def classify_error(script_name, exc):
+    """
+    根据出错的步骤和异常类型，猜测问题更可能出在"幕布内容"还是"程序本身"，
+    给用户一个可执行的方向，而不是让他们对着一句"异常导致中断"发懵。
+
+    如果 exc 是 6-generate_body.py 里的 ContentRenderError（鸭子类型判断，
+    避免跨模块 import 动态 reload 出来的类），说明已经定位到具体是哪一段
+    幕布内容导致渲染失败，exc.location 会由调用方单独展示给用户。
+    """
+    real_exc = getattr(exc, 'original_exc', exc)
+
+    if script_name == "0-fetch_mubu" or isinstance(real_exc, NETWORK_ERROR_TYPES):
+        return {
+            "category": "链接或网络问题",
+            "advice": "请检查：1) ShareID/链接是否正确；2) 幕布文档是否设置了访问密码；3) 当前网络是否可以访问 mubu.com。确认无误后可重试。"
+        }
+    if isinstance(real_exc, CONTENT_ERROR_TYPES):
+        return {
+            "category": "幕布内容可能存在特殊格式",
+            "advice": "大概率是大纲里某处内容比较特殊（例如空表格单元格、超长段落、异常符号等）导致生成脚本处理失败。建议先去幕布文档里检查/简化下方定位到的内容后重试；如果修改后仍然报错，请把下方日志文件发给开发者。"
+        }
+    return {
+        "category": "程序本身的异常",
+        "advice": "这类问题通常不是幕布内容导致的，需要开发者介入排查。请点击下方按钮打开日志文件，并将其发送给开发者。"
+    }
+
 
 class Api:
     def get_version(self):
@@ -48,6 +95,8 @@ class Api:
         # 用于记录本次生成的最终路径，方便“另存为”和“预览”
         self.last_final_path = None
         self.last_course_name = "未命名幻灯片"
+        # 记录最近一次失败时生成的日志文件路径，供前端"打开日志文件"按钮使用
+        self.last_error_log_path = None
 
     def generate_ppt(self, share_id):
         """前端点击生成按钮时触发"""
@@ -95,10 +144,12 @@ class Api:
         if self.asset_dir not in sys.path:
             sys.path.insert(0, self.asset_dir)
 
+        current_script = None
         try:
             for script_name in scripts:
+                current_script = script_name
                 self._js_call(f'appendLog(">>> 正在执行模块: {script_name}")')
-                
+
                 # 模拟 sys.argv 参数以适配各脚本内部加载或 argparse
                 if script_name == "0-fetch_mubu":
                     sys.argv = [script_name + ".py", share_id]
@@ -124,16 +175,79 @@ class Api:
 
             # 全部完成，执行清理
             self._cleanup_temp_files(share_id)
-            
+
             self._js_call('appendLog("✅ 所有步骤执行完毕！准备进入结果页...")')
             self._js_call('taskCompleted(true, "成功")')
-            
+
         except Exception as e:
+            payload = self._handle_pipeline_error(current_script, share_id, e)
             self._js_call(f'appendLog("❌ 产生异常: {str(e)}")')
-            self._js_call('taskCompleted(false, "异常导致中断")')
+            self._js_call(f'taskCompleted(false, {json.dumps(json.dumps(payload, ensure_ascii=False))})')
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+
+    def _handle_pipeline_error(self, script_name, share_id, exc):
+        """
+        整理一份用户能看懂的报错信息：卡在哪一步、大致原因方向（幕布内容 or 程序bug）、
+        以及一份写到磁盘的完整堆栈日志文件路径，方便用户转发给开发者定位问题。
+        """
+        step_label = STEP_LABELS.get(script_name, script_name or "未知步骤")
+        guess = classify_error(script_name, exc)
+        location = getattr(exc, 'location', None)
+        # 若是 ContentRenderError，展示原始异常（IndexError/KeyError等）而不是外层包装类型
+        real_exc = getattr(exc, 'original_exc', exc)
+        tb_text = traceback.format_exc()
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        log_dir = os.path.join(self.work_dir, "output", "error_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_filename = f"error_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        log_path = os.path.join(log_dir, log_filename)
+
+        report_text = (
+            f"时间: {timestamp}\n"
+            f"程序版本: v{__version__}\n"
+            f"ShareID: {share_id}\n"
+            f"失败步骤: {step_label} ({script_name})\n"
+            f"问题方向判断: {guess['category']}\n"
+            + (f"具体定位: {location}\n" if location else "")
+            + f"异常类型: {type(real_exc).__name__}\n"
+            f"异常信息: {real_exc}\n"
+            f"----------------- 完整堆栈 -----------------\n"
+            f"{tb_text}"
+        )
+        try:
+            with open(log_path, 'w', encoding='utf-8') as f:
+                f.write(report_text)
+            self.last_error_log_path = log_path
+        except Exception:
+            self.last_error_log_path = None
+
+        return {
+            "step": step_label,
+            "category": guess["category"],
+            "advice": guess["advice"],
+            "location": location,
+            "error_summary": f"{type(real_exc).__name__}: {real_exc}",
+            "log_path": self.last_error_log_path,
+        }
+
+    def open_error_log(self):
+        """在 Finder/资源管理器中定位并打开最近一次的报错日志文件"""
+        log_path = self.last_error_log_path
+        if not log_path or not os.path.exists(log_path):
+            self._js_call('appendLog("⚠️ 未找到报错日志文件。")')
+            return
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["open", "-R", log_path])
+            elif sys.platform == "win32":
+                subprocess.run(["explorer", "/select,", log_path])
+            else:
+                subprocess.run(["xdg-open", os.path.dirname(log_path)])
+        except Exception as e:
+            self._js_call(f'appendLog("⚠️ 打开日志文件失败: {str(e)}")')
 
     def _cleanup_temp_files(self, share_id):
         """清理过程中间文件，将最终PPT移动到单独的 share_id 文件夹，其余全删"""

@@ -16,6 +16,38 @@ from pptx.util import Emu, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 
+class ContentRenderError(Exception):
+    """
+    包装渲染失败时定位到的具体幕布内容（章节名+大纲位置+文本预览），
+    使上层（gui_app.py）能把"哪一行内容有问题"展示给最终用户，而不只是一句脚本报错。
+    """
+    def __init__(self, location, original_exc):
+        self.location = location
+        self.original_exc = original_exc
+        super().__init__(f"{location} —— {type(original_exc).__name__}: {original_exc}")
+
+
+def _index_path_str(content_item):
+    """把 index（如 [1, 0, 2]）转成人类可读的 1-based 位置串，如 '2-1-3'"""
+    idx = content_item.get('index') or []
+    return "-".join(str(i + 1) for i in idx) if idx else "?"
+
+
+def _content_snippet(content_item, max_len=40):
+    """从内容块里提取一小段可辨识文字，便于用户回幕布原文里搜索定位"""
+    ctype = content_item.get('type')
+    if ctype == 'text':
+        parts = [t.get('text', '') for t in content_item.get('text', []) if t.get('text')]
+        snippet = ' / '.join(parts)
+        return (snippet[:max_len] + '…') if len(snippet) > max_len else (snippet or '(空文本)')
+    if ctype == 'table':
+        rows = content_item.get('table', {}).get('rows', [])
+        return str(rows[0]) if rows else '(空表格)'
+    if ctype == 'image':
+        return content_item.get('image', {}).get('uri', '') or '(空图片)'
+    return ''
+
+
 # ----------------- Open XML 命名空间 -----------------
 NSMAP = {
     'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
@@ -361,10 +393,11 @@ def add_table_to_slide(slide, data, prs):
         table.rows[r_idx].height = actual_h
         for c_idx, val in enumerate(r_data):
             cell = table.cell(r_idx, c_idx)
-            cell.text = str(val)
+            cell.text_frame.clear()
             cell.vertical_anchor = MSO_ANCHOR.MIDDLE
             p = cell.text_frame.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
-            run = p.runs[0]; run.font.size = Pt(12)
+            # 空字符串场景下 cell.text 不会生成 run，改为手动 add_run 保证一定存在
+            run = p.add_run(); run.text = str(val); run.font.size = Pt(12)
             if r_idx == 0:
                 cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(69, 82, 103)
                 run.font.name, run.font.bold, run.font.color.rgb = '微软雅黑', True, RGBColor(255, 255, 255)
@@ -424,22 +457,39 @@ def main():
                 if ctype == 'text':
                     # 收集连续的文字块一起分页
                     txt_group = []
+                    start_i = i
                     while i < len(contents) and contents[i].get('type') == 'text':
                         txt_group.append(contents[i])
                         i += 1
-                    for pg, sz in paginate_contents_custom(txt_group):
-                        added_slides.append(create_content_slide_optimized(prs, lay, cn, pg, sz, note))
+                    try:
+                        for pg, sz in paginate_contents_custom(txt_group):
+                            added_slides.append(create_content_slide_optimized(prs, lay, cn, pg, sz, note))
+                    except Exception as e:
+                        first = txt_group[0]
+                        loc = (f"章节「{cn}」的文字内容（大纲位置 {_index_path_str(first)}，"
+                               f"内容预览：{_content_snippet(first)}）")
+                        raise ContentRenderError(loc, e) from e
                 elif ctype == 'image':
-                    s = prs.slides.add_slide(lay)
-                    write_title_box(s, cn, note)
-                    append_images_to_slide(s, c.get('image', {}), prs)
-                    added_slides.append(s)
+                    try:
+                        s = prs.slides.add_slide(lay)
+                        write_title_box(s, cn, note)
+                        append_images_to_slide(s, c.get('image', {}), prs)
+                        added_slides.append(s)
+                    except Exception as e:
+                        loc = (f"章节「{cn}」的图片内容（大纲位置 {_index_path_str(c)}，"
+                               f"图片：{_content_snippet(c)}）")
+                        raise ContentRenderError(loc, e) from e
                     i += 1
                 elif ctype == 'table':
-                    s = prs.slides.add_slide(lay)
-                    write_title_box(s, cn, note)
-                    add_table_to_slide(s, c.get('table', {}), prs)
-                    added_slides.append(s)
+                    try:
+                        s = prs.slides.add_slide(lay)
+                        write_title_box(s, cn, note)
+                        add_table_to_slide(s, c.get('table', {}), prs)
+                        added_slides.append(s)
+                    except Exception as e:
+                        loc = (f"章节「{cn}」的表格内容（大纲位置 {_index_path_str(c)}，"
+                               f"表头预览：{_content_snippet(c)}）")
+                        raise ContentRenderError(loc, e) from e
                     i += 1
                 else:
                     i += 1

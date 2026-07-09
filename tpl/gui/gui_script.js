@@ -13,6 +13,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const openPptBtn = document.getElementById('openPptBtn');
     const backBtn = document.getElementById('backBtn');
 
+    const page3 = document.getElementById('page3');
+    const errorStep = document.getElementById('errorStep');
+    const errorCategory = document.getElementById('errorCategory');
+    const errorLocationRow = document.getElementById('errorLocationRow');
+    const errorLocation = document.getElementById('errorLocation');
+    const errorAdvice = document.getElementById('errorAdvice');
+    const errorSummary = document.getElementById('errorSummary');
+    const openLogBtn = document.getElementById('openLogBtn');
+    const backFromErrorBtn = document.getElementById('backFromErrorBtn');
+
     // 状态管理
     let isProcessing = false;
 
@@ -71,10 +81,61 @@ document.addEventListener('DOMContentLoaded', () => {
             page1.style.display = 'none';
             page2.style.display = 'block';
         } else {
-            alert("执行失败：" + message);
+            showErrorPage(message);
         }
         resetBtn();
     };
+
+    // ❌ 展示结构化的失败信息，帮助用户判断是幕布内容问题还是需要联系开发者
+    function showErrorPage(message) {
+        let info = null;
+        try {
+            info = JSON.parse(message);
+        } catch (e) {
+            info = null;
+        }
+
+        if (info) {
+            errorStep.innerText = "失败于：" + info.step;
+            errorCategory.innerText = info.category;
+            errorAdvice.innerText = info.advice || '';
+            errorSummary.innerText = info.error_summary || '';
+            openLogBtn.style.display = info.log_path ? 'block' : 'none';
+
+            if (info.location) {
+                errorLocation.innerText = info.location;
+                errorLocationRow.style.display = 'block';
+            } else {
+                errorLocationRow.style.display = 'none';
+            }
+        } else {
+            // 兜底：万一 Python 端传回的不是 JSON，退化为展示原始文本
+            errorStep.innerText = '';
+            errorCategory.innerText = '未知错误';
+            errorLocationRow.style.display = 'none';
+            errorAdvice.innerText = '请打开日志文件或联系开发者协助排查。';
+            errorSummary.innerText = String(message);
+            openLogBtn.style.display = 'block';
+        }
+
+        page1.style.display = 'none';
+        page2.style.display = 'none';
+        page3.style.display = 'block';
+    }
+
+    // 📄 打开报错日志文件所在位置
+    openLogBtn.addEventListener('click', () => {
+        if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.open_error_log();
+        }
+    });
+
+    // 返回重试
+    backFromErrorBtn.addEventListener('click', () => {
+        page3.style.display = 'none';
+        page1.style.display = 'block';
+        consolePanel.style.display = 'none';
+    });
 
     // 📜 实时日志追加
     window.appendLog = (text) => {
