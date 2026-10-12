@@ -120,43 +120,58 @@ def flush_text_group(chapter, title, title_en, index_path, text_group):
         })
 
 
+def split_item_by_tables(item):
+    """
+    递归拆分一个文字项：表格可能嵌在 subContent 的任意深度（如 4、5 级以后），
+    按原始顺序返回分段列表，每段为 ('text', 文字项) 或 ('table', rows)。
+    表格之后剩余的文字段会保留祖先文字作为上下文，保证续页语义完整。
+    """
+    segments = []
+    pending_sub = []
+    emitted_text = False
+
+    def flush():
+        nonlocal pending_sub, emitted_text
+        # 表格前没有新文字、且本项文字已输出过时，不再重复输出空壳标题
+        if pending_sub or not emitted_text:
+            segments.append(('text', {**item, 'subContent': pending_sub}))
+            emitted_text = True
+        pending_sub = []
+
+    for child in item.get('subContent', []):
+        if child.get('__type') == 'table':
+            flush()
+            segments.append(('table', child['rows']))
+            continue
+        for seg_type, seg in split_item_by_tables(child):
+            if seg_type == 'text':
+                pending_sub.append(seg)
+            else:
+                flush()
+                segments.append(('table', seg))
+
+    if pending_sub or not emitted_text:
+        flush()
+    return segments
+
+
 def explode_sub_content(chapter, title, title_en, index_path, top_text_item):
     """
     将一个顶层文字项（含混合 subContent）拆分为：
     若干文字块 + 表格块，按原始顺序写入 chapter content。
+    表格可嵌在任意深度，由 split_item_by_tables 递归拆出。
     """
-    sub = top_text_item.get('subContent', [])
-    has_embedded_table = any(item.get('__type') == 'table' for item in sub)
-
-    if not has_embedded_table:
-        # 没有嵌入表格，走正常路径
-        flush_text_group(chapter, title, title_en, index_path, [top_text_item])
-        return
-
-    # 有嵌入表格：按顺序拆分
-    # 第一段：顶层文字节点本身（subContent 为表格前的文字子项）
-    pending_sub = []
-    for item in sub:
-        if item.get('__type') == 'table':
-            # 先把到目前为止的文字部分写出去
-            partial_item = {**top_text_item, 'subContent': pending_sub}
-            flush_text_group(chapter, title, title_en, index_path, [partial_item])
-            pending_sub = []
-            # 写表格块
+    for seg_type, seg in split_item_by_tables(top_text_item):
+        if seg_type == 'text':
+            flush_text_group(chapter, title, title_en, index_path, [seg])
+        else:
             chapter['content'].append({
                 'title': title,
                 'titleEn': title_en,
                 'index': index_path,
                 'type': 'table',
-                'table': {'rows': item['rows']}
+                'table': {'rows': seg}
             })
-        else:
-            pending_sub.append(item)
-
-    # 剩余文字
-    if pending_sub:
-        partial_item = {**top_text_item, 'subContent': pending_sub}
-        flush_text_group(chapter, title, title_en, index_path, [partial_item])
 
 def recursive_parse_v2(node, level, code_prefix, parent_cn, parent_en, index_path):
     """
