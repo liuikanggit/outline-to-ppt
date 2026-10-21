@@ -268,18 +268,40 @@ def recursive_parse_v2(node, level, code_prefix, parent_cn, parent_en, index_pat
                     continue
 
             if c_has_image:
-                # A. 图片内容: 根据 TS 结构, imageContent 在 content 里
-                for img in c_images:
-                    chapter["content"].append({
-                        "title": cn, # 上级中文名
-                        "titleEn": en,
-                        "index": c_index_path,
-                        "type": "image",
-                        "image": {
-                            "id": img.get("id", ""),
-                            "uri": img.get("uri", "")
-                        }
+                # A. 图片内容：顺序为 节点文字 → 图片 → 子节点，与深层图片处理规则一致
+                images = [
+                    {'__type': 'image', 'image': {'id': img.get('id', ''), 'uri': img.get('uri', '')}}
+                    for img in c_images if img.get('uri')
+                ]
+                blocks = images + build_sub_content(child)
+                if c_cn:
+                    # 有文字：文字作为顶层项，图片和子节点挂在其下，由 explode 按序拆分
+                    explode_sub_content(chapter, cn, en, c_index_path, {
+                        "text": c_cn,
+                        "hasBullet": False,
+                        "subContent": blocks
                     })
+                else:
+                    # 纯图片节点：图片直接成页，其子节点（如有）作为顶层内容跟在后面
+                    for blk in blocks:
+                        if blk.get('__type') == 'image':
+                            chapter["content"].append({
+                                "title": cn, # 上级中文名
+                                "titleEn": en,
+                                "index": c_index_path,
+                                "type": "image",
+                                "image": blk['image']
+                            })
+                        elif blk.get('__type') == 'table':
+                            chapter["content"].append({
+                                "title": cn,
+                                "titleEn": en,
+                                "index": c_index_path,
+                                "type": "table",
+                                "table": {"rows": blk['rows']}
+                            })
+                        else:
+                            explode_sub_content(chapter, cn, en, c_index_path, {**blk, "hasBullet": False})
             elif c_cn:
                 # B. 文字内容：递归子列表可能含表格，需拆分
                 new_text_item = {
