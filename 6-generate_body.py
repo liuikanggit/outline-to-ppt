@@ -13,6 +13,7 @@ from urllib.request import urlretrieve
 from lxml import etree
 from pptx import Presentation
 from pptx.util import Emu, Pt
+from pptx.parts.image import Image as PptxImage
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 
@@ -320,8 +321,9 @@ def append_images_to_slide(slide, img_info, prs):
         BOTTOM_MARGIN = 576000 # 1.6cm
         AVAILABLE_H = prs.slide_height - TOP_MARGIN - BOTTOM_MARGIN
 
-        w_orig = img_info.get('w', 1470)
-        h_orig = img_info.get('h', 786) or 1
+        # 读取图片真实像素尺寸（幕布数据不带宽高），避免按固定比例拉伸失真
+        w_orig, h_orig = PptxImage.from_file(img_path).size
+        w_orig, h_orig = w_orig or 1, h_orig or 1
 
         # 锁定长宽比（Aspect Ratio）缩放到宽30cm、高13cm约束盒子内
         fw, fh = MAX_W, int(MAX_W * (h_orig / w_orig))

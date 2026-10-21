@@ -67,9 +67,9 @@ def parse_bilingual(text):
 # ----------------- v2 新增递归工具 -----------------
 def build_sub_content(node):
     """
-    递归构建子内容列表，支持文字与表格混合。
+    递归构建子内容列表，支持文字、表格、图片混合。
     返回列表中每项要么是文字节点（hasBullet=True），
-    要么是表格标记（__type='table'），供上层拆分。
+    要么是表格/图片标记（__type='table' / 'image'），供上层拆分。
     """
     sub_list = []
     for child in node.get('children', []):
@@ -85,12 +85,21 @@ def build_sub_content(node):
             if text.startswith('*'):
                 text = text[1:].strip()
             cn, _ = parse_bilingual(text)
+            # 图片挂在该节点文字之后、子节点之前，保持幕布中的视觉顺序
+            images = [
+                {'__type': 'image', 'image': {'id': img.get('id', ''), 'uri': img.get('uri', '')}}
+                for img in child.get('images', []) if img.get('uri')
+            ]
             if cn:
                 sub_list.append({
                     'text': cn,
                     'hasBullet': True,
-                    'subContent': build_sub_content(child)
+                    'subContent': images + build_sub_content(child)
                 })
+            elif images:
+                # 纯图片节点（无文字）：图片和其子内容直接提升到当前层
+                sub_list.extend(images)
+                sub_list.extend(build_sub_content(child))
     return sub_list
 
 
@@ -98,11 +107,11 @@ def flush_text_group(chapter, title, title_en, index_path, text_group):
     """将积累的文字节点写入 chapter content（内部工具函数）"""
     if not text_group:
         return
-    # 过滤掉 subContent 中的表格标记，只保留纯文字子项
+    # 过滤掉 subContent 中的表格/图片标记，只保留纯文字子项
     def clean_sub(items):
         return [
             {**item, 'subContent': clean_sub(item.get('subContent', []))}
-            for item in items if item.get('__type') != 'table'
+            for item in items if not item.get('__type')
         ]
     cleaned = [
         {**item, 'subContent': clean_sub(item.get('subContent', []))}
@@ -120,10 +129,10 @@ def flush_text_group(chapter, title, title_en, index_path, text_group):
         })
 
 
-def split_item_by_tables(item):
+def split_item_by_blocks(item):
     """
-    递归拆分一个文字项：表格可能嵌在 subContent 的任意深度（如 4、5 级以后），
-    按原始顺序返回分段列表，每段为 ('text', 文字项) 或 ('table', rows)。
+    递归拆分一个文字项：表格/图片可能嵌在 subContent 的任意深度（如 4、5 级以后），
+    按原始顺序返回分段列表，每段为 ('text', 文字项)、('table', rows) 或 ('image', 图片信息)。
     表格之后剩余的文字段会保留祖先文字作为上下文，保证续页语义完整。
     """
     segments = []
@@ -143,12 +152,16 @@ def split_item_by_tables(item):
             flush()
             segments.append(('table', child['rows']))
             continue
-        for seg_type, seg in split_item_by_tables(child):
+        if child.get('__type') == 'image':
+            flush()
+            segments.append(('image', child['image']))
+            continue
+        for seg_type, seg in split_item_by_blocks(child):
             if seg_type == 'text':
                 pending_sub.append(seg)
             else:
                 flush()
-                segments.append(('table', seg))
+                segments.append((seg_type, seg))
 
     if pending_sub or not emitted_text:
         flush()
@@ -158,12 +171,20 @@ def split_item_by_tables(item):
 def explode_sub_content(chapter, title, title_en, index_path, top_text_item):
     """
     将一个顶层文字项（含混合 subContent）拆分为：
-    若干文字块 + 表格块，按原始顺序写入 chapter content。
-    表格可嵌在任意深度，由 split_item_by_tables 递归拆出。
+    若干文字块 + 表格块 + 图片块，按原始顺序写入 chapter content。
+    表格/图片可嵌在任意深度，由 split_item_by_blocks 递归拆出。
     """
-    for seg_type, seg in split_item_by_tables(top_text_item):
+    for seg_type, seg in split_item_by_blocks(top_text_item):
         if seg_type == 'text':
             flush_text_group(chapter, title, title_en, index_path, [seg])
+        elif seg_type == 'image':
+            chapter['content'].append({
+                'title': title,
+                'titleEn': title_en,
+                'index': index_path,
+                'type': 'image',
+                'image': seg
+            })
         else:
             chapter['content'].append({
                 'title': title,
